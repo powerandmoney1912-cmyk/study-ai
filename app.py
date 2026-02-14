@@ -10,10 +10,6 @@ if "AIzaSyBT-8Xa8JZyIQKAF_XrymlkkRjLlBUmAJg" in st.secrets:
     # This line now correctly looks for the label "AIzaSyBT-8Xa8JZyIQKAF_XrymlkkRjLlBUmAJg"
     genai.configure(api_key=st.secrets["AIzaSyBT-8Xa8JZyIQKAF_XrymlkkRjLlBUmAJg"])
     model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    # This shows the pink box if the Secret isn't saved yet
-    st.error("Wait! The API Key is missing from Streamlit Secrets.")
-    st.stop()
 
 # 3. Chat History Setup
 if "messages" not in st.session_state:
@@ -37,3 +33,4 @@ if prompt := st.chat_input("Ask me anything about your studies!"):
             st.session_state.messages.append({"role": "assistant", "content": response.text})
         except Exception as e:
             st.error(f"AI Error: {e}")
+

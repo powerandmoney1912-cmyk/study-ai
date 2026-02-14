@@ -31,16 +31,14 @@ def initialize_gemini():
             "top_p": 0.95,
             "max_output_tokens": 2048,
         }
-        # FIXED LINE BELOW: Added "models/" prefix
+        # UPDATED: Using the most stable model name
         return genai.GenerativeModel(
-            model_name="models/gemini-1.5-flash", 
+            model_name="gemini-1.5-flash", 
             generation_config=generation_config
         )
     except Exception as e:
         st.error(f"Failed to connect to Google AI: {str(e)}")
         st.stop()
-
-model = initialize_gemini()
 
 # --- 4. SIDEBAR NAVIGATION ---
 with st.sidebar:
@@ -99,4 +97,5 @@ if prompt := st.chat_input("What are we studying today?"):
             
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
+
 

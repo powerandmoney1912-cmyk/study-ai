@@ -28,13 +28,17 @@ if prompt := st.chat_input("What are we learning today?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-
+    
     with st.chat_message("assistant"):
         try:
             # This is where the magic happens
             response = model.generate_content(prompt)
-            st.markdown(response.text)
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
+            # BUG FIX: Check if response has text before accessing it
+            if response.text:
+                st.markdown(response.text)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+            else:
+                st.warning("No response generated. Please try again.")
         except Exception as e:
             st.error(f"Technical Error: {e}")
             st.info("If you see 'v1beta' in the error above, make sure you created requirements.txt!")

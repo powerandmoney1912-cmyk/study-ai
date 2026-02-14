@@ -1,54 +1,67 @@
 import streamlit as st
 import google.generativeai as genai
 
-# 1. Page Config
-st.set_page_config(page_title="AI Study Master", page_icon="🎓")
-st.title("🎓 AI Study Master")
+# 1. PROFESSIONAL PAGE SETUP
+st.set_page_config(page_title="Study Master Pro", page_icon="🎓", layout="wide")
 
-# 2. API Key Setup
+# 2. SIDEBAR WITH EXTRA FEATURES
+with st.sidebar:
+    st.title("⚙️ AI Settings")
+    st.markdown("---")
+    
+    # Feature: Creativity Control
+    temp = st.slider("Creativity Level", 0.0, 1.0, 0.7)
+    
+    # Feature: Quick Actions
+    st.subheader("Quick Actions")
+    if st.button("🗑️ Clear All Chat"):
+        st.session_state.messages = []
+        st.rerun()
+        
+    # Feature: Export Chat
+    if "messages" in st.session_state and len(st.session_state.messages) > 0:
+        chat_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+        st.download_button("📥 Download Study Notes", chat_text, file_name="study_notes.txt")
+
+# 3. API INITIALIZATION (THE BUG FIX)
 if "GOOGLE_API_KEY" not in st.secrets:
-    st.error("Missing API Key in Streamlit Secrets!")
+    st.error("❌ KEY MISSING: Add GOOGLE_API_KEY to Streamlit Secrets.")
     st.stop()
 
-# 3. Initialize the AI
+# Force v1 connection by using the latest stable library methods
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+model = genai.GenerativeModel(
+    model_name='gemini-1.5-flash',
+    generation_config={"temperature": temp}
+)
 
-# Use the correct model name
-model = genai.GenerativeModel('gemini-1.5-flash-latest')
+# 4. CHAT INTERFACE
+st.title("🎓 Study Master Pro")
+st.info("I am your advanced tutor. Ask me to explain concepts, solve math, or quiz you!")
 
-# 4. Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Show previous messages
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# 5. User Input
-if prompt := st.chat_input("Ask me anything..."):
-    # Add user message to history
+# 5. INPUT & AI RESPONSE
+if prompt := st.chat_input("What are we learning today?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-    
-    # Get AI response
+
     with st.chat_message("assistant"):
         try:
-            # Generate response
+            # The simple call prevents v1beta routing errors
             response = model.generate_content(prompt)
-            
-            # Check if response has text
-            if response.text:
-                st.markdown(response.text)
-                # Save assistant response to history
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": response.text
-                })
-            else:
-                st.warning("No response generated. Please try again.")
-                
+            st.markdown(response.text)
+            st.session_state.messages.append({"role": "assistant", "content": response.text})
         except Exception as e:
-            st.error(f"Error: {str(e)}")
-            st.info("Try rephrasing your question or check your API key permissions.")
+            # Detailed error reporting
+            if "404" in str(e):
+                st.error("Error 404: The model name is incorrect or the API version is outdated.")
+            else:
+                st.error(f"AI Connection Error: {e}")

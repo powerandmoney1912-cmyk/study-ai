@@ -22,19 +22,18 @@ st.markdown("""
 def initialize_gemini():
     if "GOOGLE_API_KEY" not in st.secrets:
         st.error("❌ CRITICAL ERROR: GOOGLE_API_KEY not found in Streamlit Secrets.")
-        st.info("Please go to Settings -> Secrets and add: GOOGLE_API_KEY = 'your_key'")
         st.stop()
     
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-        # Professional settings for the AI
         generation_config = {
             "temperature": 0.7,
             "top_p": 0.95,
             "max_output_tokens": 2048,
         }
+        # FIXED LINE BELOW: Added "models/" prefix
         return genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="models/gemini-1.5-flash", 
             generation_config=generation_config
         )
     except Exception as e:
@@ -100,3 +99,4 @@ if prompt := st.chat_input("What are we studying today?"):
             
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
+

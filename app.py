@@ -19,11 +19,13 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- 3. API INITIALIZATION ---
-def initialize_gemini():
-    if "GOOGLE_API_KEY" not in st.secrets:
-        st.error("❌ CRITICAL ERROR: GOOGLE_API_KEY not found in Streamlit Secrets.")
-        st.stop()
-    
+# We define 'model' as None first so the app knows it exists
+model = None
+
+if "GOOGLE_API_KEY" not in st.secrets:
+    st.error("❌ CRITICAL ERROR: GOOGLE_API_KEY not found in Streamlit Secrets.")
+    st.stop()
+else:
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
         generation_config = {
@@ -31,8 +33,8 @@ def initialize_gemini():
             "top_p": 0.95,
             "max_output_tokens": 2048,
         }
-        # UPDATED: Using the most stable model name
-        return genai.GenerativeModel(
+        # This creates the AI brain correctly
+        model = genai.GenerativeModel(
             model_name="gemini-1.5-flash", 
             generation_config=generation_config
         )
@@ -97,5 +99,6 @@ if prompt := st.chat_input("What are we studying today?"):
             
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
+
 
 

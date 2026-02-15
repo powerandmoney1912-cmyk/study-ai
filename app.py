@@ -8,35 +8,22 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 # --- 0. GOOGLE VERIFICATION ---
 # This allows Google Search Console to verify your ownership
 st.markdown('<meta name="google-site-verification" content="ThWp6_7rt4Q973HycJ07l-jYZ0o55s8f0Em28jBBNoU" />', unsafe_allow_html=True)
+import streamlit as st
+import google.generativeai as genai
+from PyPDF2 import PdfReader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-# --- 1. SETUP ---
+# --- 1. SETUP & VERIFICATION ---
+# Putting the verification tag inside a markdown with unsafe_allow_html 
+# right at the top ensures it's one of the first things Google sees.
 st.set_page_config(page_title="Study Master Pro", layout="wide")
+st.markdown('<meta name="google-site-verification" content="ThWp6_7rt4Q973HycJ07l-jYZ0o55s8f0Em28jBBNoU" />', unsafe_allow_html=True)
 
-# Get API Key from Streamlit Secrets
-try:
-    API_KEY = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=API_KEY)
-except:
-    st.error("❌ API Key missing! Add GOOGLE_API_KEY to your Streamlit Secrets.")
-
-def get_working_model():
-    try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for target in ['models/gemini-1.5-flash', 'models/gemini-pro']:
-            if target in available_models: return target
-        return available_models[0]
-    except: return "gemini-pro"
-
-MODEL_ID = get_working_model()
-
-# --- 2. SIDEBAR ---
-with st.sidebar:
-    st.title("🧠 Study Master Pro")
-    menu = st.radio("Navigation", ["💬 Chat", "📝 Quiz Mode", "📅 Study Plan"])
-    st.divider()
-    if st.button("🗑️ Reset App"):
-        st.session_state.clear()
-        st.rerun()
+# --- 2. API CONFIG ---
+API_KEY = st.secrets["GOOGLE_API_KEY"]
+genai.configure(api_key=API_KEY)
 
 # --- 3. HELPER FUNCTIONS ---
 def process_pdf(file):
@@ -117,3 +104,4 @@ elif menu == "📅 Study Plan":
         with st.spinner("Planning your success..."):
             plan = call_ai(f"Create a {days}-day study plan for {topic}. Be specific and organized.")
             st.markdown(plan)
+

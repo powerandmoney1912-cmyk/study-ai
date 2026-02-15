@@ -1,8 +1,9 @@
 import streamlit as st
 from supabase import create_client, Client
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import PIL.Image
 import os
+import json
 
 # --- 1. INITIAL SETUP ---
 st.set_page_config(page_title="Study Master Pro", layout="centered", page_icon="🎓")
@@ -98,9 +99,12 @@ if "user" not in st.session_state:
     st.session_state.user = None
 if "is_premium" not in st.session_state:
     st.session_state.is_premium = False
+if "schedules" not in st.session_state:
+    st.session_state.schedules = []
 
-# --- 5. USAGE TRACKER ---
+# --- 5. USAGE TRACKER (FIXED - COUNTS ALL INTERACTIONS) ---
 def get_daily_usage():
+    """Counts all AI interactions in last 24 hours"""
     if not supabase or not st.session_state.user:
         return 0
     try:
@@ -112,7 +116,46 @@ def get_daily_usage():
     except:
         return 0
 
-# --- 6. LOGIN SCREEN ---
+# --- 6. SCHEDULE MANAGEMENT FUNCTIONS ---
+def save_schedule(schedule_data):
+    """Save schedule to Supabase"""
+    if not supabase or not st.session_state.user:
+        return False
+    try:
+        supabase.table("schedules").insert({
+            "user_id": st.session_state.user.id,
+            "schedule_name": schedule_data["name"],
+            "schedule_data": json.dumps(schedule_data),
+            "created_at": datetime.now().isoformat()
+        }).execute()
+        return True
+    except Exception as e:
+        st.error(f"Failed to save schedule: {e}")
+        return False
+
+def load_schedules():
+    """Load user's schedules from Supabase"""
+    if not supabase or not st.session_state.user:
+        return []
+    try:
+        res = supabase.table("schedules").select("*").eq(
+            "user_id", st.session_state.user.id
+        ).order("created_at", desc=True).execute()
+        return res.data if res.data else []
+    except:
+        return []
+
+def delete_schedule(schedule_id):
+    """Delete a schedule"""
+    if not supabase:
+        return False
+    try:
+        supabase.table("schedules").delete().eq("id", schedule_id).execute()
+        return True
+    except:
+        return False
+
+# --- 7. LOGIN SCREEN ---
 def login_screen():
     st.title("🎓 Study Master Pro")
     st.subheader("Your AI-Powered Study Companion")
@@ -153,11 +196,11 @@ def login_screen():
             else:
                 try:
                     supabase.auth.sign_up({"email": new_email, "password": new_pass})
-                    st.success("Account created! Check email to verify.")
+                    st.success("✅ Account created! Check email to verify.")
                 except Exception as e:
                     st.error(f"Signup failed: {e}")
 
-# --- 7. MAIN APP ---
+# --- 8. MAIN APP ---
 if st.session_state.user:
     if not model:
         st.error("⚠️ AI unavailable. Check errors above.")
@@ -167,189 +210,390 @@ if st.session_state.user:
         st.stop()
     
     # Sidebar
-    st.sidebar.title("💎 Study Master")
+    st.sidebar.title("💎 Study Master Pro")
+    st.sidebar.write(f"Welcome, {st.session_state.user.email.split('@')[0]}!")
     
     # Premium
     if not st.session_state.is_premium:
-        with st.sidebar.expander("🔑 Premium Code"):
-            code = st.text_input("Code", type="password", key="prem")
+        with st.sidebar.expander("🔑 Upgrade to Premium"):
+            st.write("**Benefits:**")
+            st.write("• 250 AI interactions/day (vs 50)")
+            st.write("• Unlimited schedules")
+            st.write("• Priority support")
+            code = st.text_input("Premium Code", type="password", key="prem")
             if st.button("Activate", key="activate_premium"):
                 if code == "STUDY777":
                     st.session_state.is_premium = True
+                    st.success("🎉 Premium Activated!")
                     st.rerun()
                 else:
-                    st.error("Invalid")
+                    st.error("Invalid code")
     else:
-        st.sidebar.success("✨ Premium Active")
+        st.sidebar.success("✨ Premium Member")
     
-    # Usage
+    # Usage Counter (FIXED - Shows correct limit)
     usage = get_daily_usage()
     limit = 250 if st.session_state.is_premium else 50
-    st.sidebar.metric("24h Usage", f"{usage}/{limit}")
+    
+    if usage >= limit:
+        st.sidebar.error(f"🚫 Limit Reached: {usage}/{limit}")
+    else:
+        st.sidebar.metric("Today's Usage", f"{usage}/{limit}")
+    
     st.sidebar.progress(min(usage/limit, 1.0))
+    st.sidebar.caption("Resets every 24 hours")
     
-    menu = st.sidebar.radio("Menu", ["Chat", "Quiz", "Image", "Tutor"])
+    # Menu
+    menu = st.sidebar.radio("📚 Navigation", [
+        "💬 Chat", 
+        "📝 Quiz", 
+        "📁 Image", 
+        "🎯 Tutor",
+        "📅 Schedule Planner"
+    ])
     
-    if st.sidebar.button("Logout"):
+    if st.sidebar.button("🚪 Logout"):
         st.session_state.user = None
         st.rerun()
     
-    # Features
+    # Check usage limit
     if usage >= limit:
         st.error(f"⚠️ Daily limit reached ({usage}/{limit})")
-        st.info("Upgrade to Premium or wait 24 hours")
-    else:
-        if menu == "Chat":
-            st.subheader("💬 AI Study Chat")
-            q = st.chat_input("Ask anything...")
-            if q:
-                with st.chat_message("user"):
-                    st.write(q)
-                try:
-                    with st.spinner("Thinking..."):
-                        resp = model.generate_content(q)
-                    with st.chat_message("assistant"):
-                        st.write(resp.text)
-                    if supabase:
-                        supabase.table("history").insert({
-                            "user_id": st.session_state.user.id,
-                            "question": q,
-                            "answer": resp.text
-                        }).execute()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+        st.info("💎 Upgrade to Premium for 250 interactions/day!")
+        st.info("⏰ Or wait for your 24-hour reset")
         
-        elif menu == "Quiz":
-            st.subheader("📝 Quiz Generator")
-            
-            # Input fields
-            topic = st.text_input("Enter topic (e.g., Biology, History):", key="quiz_topic")
-            difficulty = st.selectbox("Difficulty Level:", ["Easy", "Medium", "Hard"], key="quiz_diff")
-            num_questions = st.slider("Number of Questions:", 3, 10, 5, key="quiz_num")
-            
-            # Generate button - FIXED with unique key
-            if st.button("🎯 Generate Quiz", use_container_width=True, key="generate_quiz_btn"):
-                if not topic:
-                    st.error("Please enter a topic!")
-                else:
-                    try:
-                        with st.spinner("Creating your quiz..."):
-                            prompt = f"""Create a {num_questions}-question multiple choice quiz about {topic} at {difficulty} difficulty level.
+        # Still allow schedule planner viewing
+        if menu != "📅 Schedule Planner":
+            st.stop()
+    
+    # Features
+    if menu == "💬 Chat":
+        st.subheader("💬 AI Study Chat")
+        st.write("Ask me anything about your studies!")
+        
+        q = st.chat_input("Type your question...")
+        if q:
+            with st.chat_message("user"):
+                st.write(q)
+            try:
+                with st.spinner("Thinking..."):
+                    resp = model.generate_content(q)
+                with st.chat_message("assistant"):
+                    st.write(resp.text)
+                
+                # Save to history
+                if supabase:
+                    supabase.table("history").insert({
+                        "user_id": st.session_state.user.id,
+                        "question": q,
+                        "answer": resp.text
+                    }).execute()
+            except Exception as e:
+                st.error(f"Error: {e}")
+    
+    elif menu == "📝 Quiz":
+        st.subheader("📝 Quiz Generator")
+        st.write("Create custom quizzes on any topic!")
+        
+        topic = st.text_input("Topic (e.g., World War 2, Photosynthesis):", key="quiz_topic")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            difficulty = st.selectbox("Difficulty:", ["Easy", "Medium", "Hard"], key="quiz_diff")
+        with col2:
+            num_questions = st.slider("Questions:", 3, 10, 5, key="quiz_num")
+        
+        if st.button("🎯 Generate Quiz", use_container_width=True, key="generate_quiz_btn"):
+            if not topic:
+                st.error("Please enter a topic!")
+            else:
+                try:
+                    with st.spinner("Creating your quiz..."):
+                        prompt = f"""Create a {num_questions}-question multiple choice quiz about {topic} at {difficulty} difficulty level.
 
-Format each question like this:
-**Question 1:** [question text]
+Format:
+**Question 1:** [question]
 A) [option]
 B) [option]
 C) [option]
 D) [option]
 
-After all questions, provide:
+[repeat for all questions]
+
 **Answer Key:**
-1. [correct answer]
-2. [correct answer]
-etc.
-"""
-                            resp = model.generate_content(prompt)
-                            
-                        st.markdown("---")
-                        st.markdown(resp.text)
-                        st.markdown("---")
-                        
-                        # Download button
-                        st.download_button(
-                            label="📥 Download Quiz",
-                            data=resp.text,
-                            file_name=f"quiz_{topic.replace(' ', '_')}.txt",
-                            mime="text/plain",
-                            key="download_quiz"
-                        )
-                        
-                        # Save to history
-                        if supabase:
-                            supabase.table("history").insert({
-                                "user_id": st.session_state.user.id,
-                                "question": f"Quiz: {topic} ({difficulty})",
-                                "answer": resp.text
-                            }).execute()
-                            
-                    except Exception as e:
-                        st.error(f"Error generating quiz: {e}")
-        
-        elif menu == "Image":
-            st.subheader("📁 Image Analysis")
-            st.write("Upload study materials like diagrams, notes, or textbook pages")
-            
-            file = st.file_uploader("Upload image:", type=['jpg', 'png', 'jpeg'], key="image_upload")
-            
-            if file:
-                try:
-                    img = PIL.Image.open(file)
-                    st.image(img, caption="Your upload", use_container_width=True)
+1. [correct letter]
+2. [correct letter]
+etc."""
+                        resp = model.generate_content(prompt)
                     
-                    # Analysis button - FIXED
-                    if st.button("🔍 Analyze Image", use_container_width=True, key="analyze_img_btn"):
-                        with st.spinner("Analyzing image..."):
-                            resp = model.generate_content([
-                                """Analyze this study material and provide:
-1. **Summary** - What is this about?
-2. **Key Concepts** - Main ideas and topics
-3. **Important Details** - Facts, formulas, dates
-4. **Study Tips** - How to remember this material
-5. **Practice Questions** - 2-3 questions to test understanding""",
-                                img
-                            ])
+                    st.markdown("---")
+                    st.markdown(resp.text)
+                    st.markdown("---")
+                    
+                    st.download_button(
+                        label="📥 Download Quiz",
+                        data=resp.text,
+                        file_name=f"quiz_{topic.replace(' ', '_')}.txt",
+                        mime="text/plain",
+                        key="download_quiz"
+                    )
+                    
+                    if supabase:
+                        supabase.table("history").insert({
+                            "user_id": st.session_state.user.id,
+                            "question": f"Quiz: {topic} ({difficulty})",
+                            "answer": resp.text
+                        }).execute()
                         
-                        st.markdown("---")
-                        st.markdown(resp.text)
-                        st.markdown("---")
-                        
-                        if supabase:
-                            supabase.table("history").insert({
-                                "user_id": st.session_state.user.id,
-                                "question": "Image Analysis",
-                                "answer": resp.text
-                            }).execute()
-                            
                 except Exception as e:
                     st.error(f"Error: {e}")
+    
+    elif menu == "📁 Image":
+        st.subheader("📁 Image Analysis")
+        st.write("Upload study materials for AI analysis")
         
-        elif menu == "Tutor":
-            st.subheader("🎯 Socratic Tutor")
-            st.info("💡 The Socratic method helps you learn by asking guiding questions instead of giving direct answers.")
-            
-            problem = st.text_area("Describe your problem or question:", height=150, key="tutor_problem")
-            
-            # Start button - FIXED
-            if st.button("🚀 Start Tutoring Session", use_container_width=True, key="start_tutor_btn"):
-                if not problem:
-                    st.error("Please describe your problem first!")
-                else:
-                    try:
-                        with st.spinner("Preparing guiding questions..."):
-                            resp = model.generate_content(f"""Act as a Socratic tutor. For this student problem:
+        file = st.file_uploader("Upload image:", type=['jpg', 'png', 'jpeg'], key="image_upload")
+        
+        if file:
+            try:
+                img = PIL.Image.open(file)
+                st.image(img, caption="Your upload", use_container_width=True)
+                
+                if st.button("🔍 Analyze Image", use_container_width=True, key="analyze_img_btn"):
+                    with st.spinner("Analyzing..."):
+                        resp = model.generate_content([
+                            """Analyze this study material:
+1. **Summary** - What is this?
+2. **Key Concepts** - Main ideas
+3. **Important Details** - Facts, formulas, dates
+4. **Study Tips** - How to remember
+5. **Practice Questions** - 2-3 test questions""",
+                            img
+                        ])
+                    
+                    st.markdown("---")
+                    st.markdown(resp.text)
+                    st.markdown("---")
+                    
+                    if supabase:
+                        supabase.table("history").insert({
+                            "user_id": st.session_state.user.id,
+                            "question": "Image Analysis",
+                            "answer": resp.text
+                        }).execute()
+                        
+            except Exception as e:
+                st.error(f"Error: {e}")
+    
+    elif menu == "🎯 Tutor":
+        st.subheader("🎯 Socratic Tutor")
+        st.info("💡 Learn through guided questions, not direct answers!")
+        
+        problem = st.text_area("Describe your problem:", height=150, key="tutor_problem")
+        
+        if st.button("🚀 Start Session", use_container_width=True, key="start_tutor_btn"):
+            if not problem:
+                st.error("Please describe your problem!")
+            else:
+                try:
+                    with st.spinner("Preparing questions..."):
+                        resp = model.generate_content(f"""Act as a Socratic tutor for: "{problem}"
 
-"{problem}"
-
-Do NOT give the direct answer. Instead:
-1. Ask 3-4 guiding questions that help the student think through the problem
-2. Each question should lead them closer to discovering the answer themselves
-3. Use the Socratic method to develop critical thinking
-4. Be encouraging and supportive
+Do NOT give the answer. Instead:
+1. Ask 3-4 guiding questions
+2. Help them discover the answer
+3. Encourage critical thinking
+4. Be supportive
 
 Start with: "Let me help you think through this..."
 """)
+                    
+                    st.markdown("---")
+                    st.markdown(resp.text)
+                    st.markdown("---")
+                    
+                    if supabase:
+                        supabase.table("history").insert({
+                            "user_id": st.session_state.user.id,
+                            "question": f"Socratic: {problem}",
+                            "answer": resp.text
+                        }).execute()
+                        
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    elif menu == "📅 Schedule Planner":
+        st.subheader("📅 Study Schedule Planner")
+        st.write("Create and manage your study schedule")
+        
+        tab1, tab2, tab3 = st.tabs(["➕ Create Schedule", "📋 My Schedules", "🤖 AI Generator"])
+        
+        with tab1:
+            st.write("### Manual Schedule Creation")
+            
+            schedule_name = st.text_input("Schedule Name:", placeholder="e.g., Final Exams Week", key="sched_name")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input("Start Date:", key="start_date")
+            with col2:
+                end_date = st.date_input("End Date:", key="end_date")
+            
+            st.write("### Add Study Blocks")
+            
+            num_blocks = st.number_input("Number of study blocks:", 1, 10, 3, key="num_blocks")
+            
+            study_blocks = []
+            for i in range(num_blocks):
+                st.write(f"**Block {i+1}**")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    subject = st.text_input(f"Subject:", key=f"subject_{i}", placeholder="e.g., Math")
+                with col2:
+                    start_time = st.time_input(f"Start:", value=time(9, 0), key=f"start_{i}")
+                with col3:
+                    duration = st.selectbox(f"Duration:", ["30 min", "1 hour", "1.5 hours", "2 hours"], key=f"dur_{i}")
+                
+                topic = st.text_input(f"Topic/Task:", key=f"topic_{i}", placeholder="e.g., Chapter 5 - Calculus")
+                
+                if subject and topic:
+                    study_blocks.append({
+                        "subject": subject,
+                        "start_time": start_time.strftime("%H:%M"),
+                        "duration": duration,
+                        "topic": topic
+                    })
+                
+                st.markdown("---")
+            
+            if st.button("💾 Save Schedule", use_container_width=True, key="save_schedule"):
+                if not schedule_name:
+                    st.error("Please enter a schedule name!")
+                elif not study_blocks:
+                    st.error("Please add at least one study block!")
+                else:
+                    schedule_data = {
+                        "name": schedule_name,
+                        "start_date": start_date.isoformat(),
+                        "end_date": end_date.isoformat(),
+                        "blocks": study_blocks,
+                        "created_at": datetime.now().isoformat()
+                    }
+                    
+                    if save_schedule(schedule_data):
+                        st.success("✅ Schedule saved successfully!")
+                        st.balloons()
+                    else:
+                        st.error("Failed to save schedule")
+        
+        with tab2:
+            st.write("### Your Saved Schedules")
+            
+            schedules = load_schedules()
+            
+            if not schedules:
+                st.info("No schedules yet. Create one in the 'Create Schedule' tab!")
+            else:
+                for schedule in schedules:
+                    schedule_data = json.loads(schedule["schedule_data"])
+                    
+                    with st.expander(f"📅 {schedule_data['name']}"):
+                        st.write(f"**Period:** {schedule_data['start_date']} to {schedule_data['end_date']}")
+                        st.write(f"**Created:** {schedule['created_at'][:10]}")
+                        
+                        st.write("### Study Blocks:")
+                        for i, block in enumerate(schedule_data['blocks'], 1):
+                            st.write(f"**{i}. {block['subject']}** - {block['start_time']} ({block['duration']})")
+                            st.write(f"   📖 {block['topic']}")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("📥 Download", key=f"download_{schedule['id']}"):
+                                text = f"{schedule_data['name']}\n"
+                                text += f"Period: {schedule_data['start_date']} to {schedule_data['end_date']}\n\n"
+                                for i, block in enumerate(schedule_data['blocks'], 1):
+                                    text += f"{i}. {block['subject']} - {block['start_time']} ({block['duration']})\n"
+                                    text += f"   Topic: {block['topic']}\n\n"
+                                
+                                st.download_button(
+                                    "Confirm Download",
+                                    data=text,
+                                    file_name=f"{schedule_data['name']}.txt",
+                                    key=f"confirm_dl_{schedule['id']}"
+                                )
+                        
+                        with col2:
+                            if st.button("🗑️ Delete", key=f"delete_{schedule['id']}"):
+                                if delete_schedule(schedule['id']):
+                                    st.success("Deleted!")
+                                    st.rerun()
+        
+        with tab3:
+            st.write("### 🤖 AI-Powered Schedule Generator")
+            st.info("Let AI create an optimized study schedule for you!")
+            
+            exam_date = st.date_input("Exam/Deadline Date:", key="ai_exam_date")
+            subjects = st.text_area("Subjects to study (one per line):", 
+                                    placeholder="Math\nPhysics\nChemistry\nBiology", 
+                                    key="ai_subjects")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                hours_per_day = st.slider("Study hours per day:", 1, 12, 4, key="ai_hours")
+            with col2:
+                difficulty = st.selectbox("Overall difficulty:", ["Easy", "Medium", "Hard"], key="ai_diff")
+            
+            preferences = st.text_area("Special preferences (optional):", 
+                                       placeholder="e.g., I'm a morning person, need breaks every hour",
+                                       key="ai_prefs")
+            
+            if st.button("🎯 Generate AI Schedule", use_container_width=True, key="gen_ai_schedule"):
+                if not subjects:
+                    st.error("Please enter subjects!")
+                else:
+                    try:
+                        with st.spinner("AI is creating your personalized schedule..."):
+                            days_until_exam = (exam_date - datetime.now().date()).days
+                            
+                            prompt = f"""Create a detailed study schedule with these parameters:
+
+- Exam/Deadline: {days_until_exam} days from now
+- Subjects: {subjects}
+- Daily study time: {hours_per_day} hours
+- Difficulty level: {difficulty}
+- Preferences: {preferences if preferences else 'None'}
+
+Provide:
+1. **Overview** - Study strategy summary
+2. **Daily Breakdown** - What to study each day with time blocks
+3. **Tips** - Study techniques and time management advice
+4. **Revision Plan** - When to review each subject
+
+Make it realistic and achievable!"""
+                            
+                            resp = model.generate_content(prompt)
                         
                         st.markdown("---")
                         st.markdown(resp.text)
                         st.markdown("---")
                         
+                        st.download_button(
+                            "📥 Download AI Schedule",
+                            data=resp.text,
+                            file_name="ai_study_schedule.txt",
+                            mime="text/plain",
+                            key="download_ai_schedule"
+                        )
+                        
+                        # Save to history (counts towards usage)
                         if supabase:
                             supabase.table("history").insert({
                                 "user_id": st.session_state.user.id,
-                                "question": f"Socratic: {problem}",
+                                "question": f"AI Schedule: {subjects.split()[0]}... ({days_until_exam} days)",
                                 "answer": resp.text
                             }).execute()
-                            
+                        
                     except Exception as e:
                         st.error(f"Error: {e}")
 

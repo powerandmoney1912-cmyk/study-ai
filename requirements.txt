@@ -3,6 +3,7 @@ google-generativeai>=0.8.0
 PyPDF2
 gTTS
 langchain
+langchain-text-splitters
 langchain-google-genai
 faiss-cpu
 langchain-community

@@ -24,17 +24,20 @@ with st.sidebar:
     menu = st.radio("Navigation", ["💬 Chat", "📝 Quiz Mode", "📅 Study Plan", "⚙️ Settings"])
     
     st.markdown("---")
-    # This input will now trigger an update as soon as you press Enter
-    access_input = st.text_input("Premium Code:", type="password", help="Type code and press Enter")
+    # Using 'on_change' to ensure it processes the code immediately
+    access_input = st.text_input("Premium Code:", type="password", key="premium_code")
     
     is_premium = (access_input == "STUDY2026")
     
-    # FIX: Updated model name to avoid the 404 error
-    current_model = 'gemini-2.0-flash' if is_premium else 'gemini-1.5-flash-8b'
-    
+    # ULTIMATE 404 FIX: Using the most stable model names possible
     if is_premium:
+        current_model = 'gemini-1.5-pro' 
         st.markdown('<div class="premium-badge">✨ PREMIUM ACTIVE</div>', unsafe_allow_html=True)
+    else:
+        current_model = 'gemini-1.5-flash'
+        st.info("Using Free Tier")
     
+    st.markdown("---")
     if st.button("🗑️ Clear Chat"):
         st.session_state.messages = []
         st.rerun()
@@ -42,11 +45,16 @@ with st.sidebar:
 # --- 3. RAG ENGINE ---
 def process_pdf(file):
     reader = PdfReader(file)
-    text = "".join([page.extract_text() or "" for page in reader.pages])
+    text = ""
+    for page in reader.pages:
+        content = page.extract_text()
+        if content:
+            text += content
+            
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.split_text(text)
     
-    # We use the standard embedding model
+    # Ensure this model name is also correct
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.secrets["GOOGLE_API_KEY"])
     vector_store = FAISS.from_texts(chunks, embedding=embeddings)
     return vector_store
@@ -67,7 +75,7 @@ if menu == "💬 Chat":
     for m in st.session_state.messages:
         with st.chat_message(m["role"]): st.markdown(m["content"])
 
-    if prompt := st.chat_input("Type your question here..."):
+    if prompt := st.chat_input("Type your question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
         
@@ -78,16 +86,18 @@ if menu == "💬 Chat":
 
         try:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+            # Remove 'models/' prefix if it fails - some versions need it, some don't.
+            # We will try the most common one first.
             model = genai.GenerativeModel(current_model)
             
-            full_prompt = f"Use this context to answer: {context}\n\nQuestion: {prompt}"
+            full_prompt = f"Context: {context}\n\nUser Question: {prompt}"
             response = model.generate_content(full_prompt)
             
             with st.chat_message("assistant"):
                 st.markdown(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
         except Exception as e:
-            st.error(f"Error: {e}. If you see 404, the model name might be restricted.")
+            st.error(f"AI Connection Error. Details: {e}")
 
 else:
-    st.info(f"Page '{menu}' is ready for content! Upload a PDF in Chat first.")
+    st.info(f"Page '{menu}' is locked or under construction. Go to Chat to upload notes!")

@@ -18,12 +18,11 @@ def initialize_supabase():
         st.error(f"Supabase failed: {e}")
         return None
 
-# --- 3. BULLETPROOF GEMINI INIT - AUTO-DETECTS WORKING MODEL ---
+# --- 3. BULLETPROOF GEMINI INIT ---
 @st.cache_resource
 def initialize_gemini():
-    """Most powerful auto-detection code - tries EVERYTHING"""
+    """Auto-detects working model"""
     try:
-        # Check API key exists
         if "GOOGLE_API_KEY" not in st.secrets:
             st.error("GOOGLE_API_KEY not in secrets!")
             return None
@@ -31,84 +30,63 @@ def initialize_gemini():
         api_key = st.secrets["GOOGLE_API_KEY"].strip()
         
         if not api_key or len(api_key) < 20:
-            st.error("API key too short or empty!")
+            st.error("API key invalid!")
             return None
         
-        # Import and configure
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         
-        # STEP 1: List ALL available models from YOUR API key
         st.info("🔍 Scanning for available AI models...")
         
         try:
             all_models = genai.list_models()
-            
-            # Filter models that support content generation
             valid_models = [
                 m for m in all_models 
                 if 'generateContent' in m.supported_generation_methods
             ]
             
             if not valid_models:
-                st.error("No models support content generation with your API key!")
-                st.info("Create a NEW key at: https://aistudio.google.com/app/apikey")
+                st.error("No compatible models found!")
                 return None
             
-            # Show what we found
             model_names = [m.name for m in valid_models]
-            st.success(f"✅ Found {len(model_names)} compatible models")
+            st.success(f"✅ Found {len(model_names)} models")
             
-            # STEP 2: Try each model until one works
+            # Try each model
             for model_info in valid_models:
                 model_name = model_info.name
                 
-                # Try with full name (e.g., "models/gemini-pro")
+                # Try full name
                 try:
                     st.info(f"Testing: {model_name}")
                     model = genai.GenerativeModel(model_name)
-                    
-                    # Quick test
-                    response = model.generate_content("Say 'ready'")
+                    response = model.generate_content("Say ready")
                     if response.text:
-                        st.success(f"🎉 CONNECTED TO: {model_name}")
+                        st.success(f"🎉 CONNECTED: {model_name}")
                         return model
-                except Exception as e:
-                    st.warning(f"❌ {model_name} failed: {str(e)[:50]}")
+                except:
+                    pass
                 
-                # Try without "models/" prefix
+                # Try short name
                 try:
                     short_name = model_name.replace("models/", "")
-                    st.info(f"Testing: {short_name}")
                     model = genai.GenerativeModel(short_name)
-                    
-                    response = model.generate_content("Say 'ready'")
+                    response = model.generate_content("Say ready")
                     if response.text:
-                        st.success(f"🎉 CONNECTED TO: {short_name}")
+                        st.success(f"🎉 CONNECTED: {short_name}")
                         return model
-                except Exception as e:
-                    st.warning(f"❌ {short_name} failed: {str(e)[:50]}")
+                except:
+                    pass
             
-            # If we get here, nothing worked
-            st.error("All models failed to initialize!")
-            st.error("Your API key may be:")
-            st.error("1. Expired")
-            st.error("2. From wrong service (Vertex AI vs AI Studio)")
-            st.error("3. Invalid or restricted")
-            st.info("Solution: Generate NEW key at https://aistudio.google.com/app/apikey")
+            st.error("All models failed!")
             return None
             
         except Exception as e:
-            st.error(f"Failed to list models: {str(e)}")
-            st.error("This usually means:")
-            st.error("1. Invalid API key format")
-            st.error("2. Network/permission issue")
-            st.error("3. Using wrong Google service")
-            st.info("Get new key: https://aistudio.google.com/app/apikey")
+            st.error(f"Model list failed: {e}")
             return None
             
     except Exception as e:
-        st.error(f"Fatal error: {str(e)}")
+        st.error(f"Fatal error: {e}")
         return None
 
 # Initialize
@@ -195,7 +173,7 @@ if st.session_state.user:
     if not st.session_state.is_premium:
         with st.sidebar.expander("🔑 Premium Code"):
             code = st.text_input("Code", type="password", key="prem")
-            if st.button("Activate"):
+            if st.button("Activate", key="activate_premium"):
                 if code == "STUDY777":
                     st.session_state.is_premium = True
                     st.rerun()
@@ -218,16 +196,18 @@ if st.session_state.user:
     
     # Features
     if usage >= limit:
-        st.error(f"Limit reached ({usage}/{limit})")
+        st.error(f"⚠️ Daily limit reached ({usage}/{limit})")
+        st.info("Upgrade to Premium or wait 24 hours")
     else:
         if menu == "Chat":
-            st.subheader("💬 Chat")
-            q = st.chat_input("Ask...")
+            st.subheader("💬 AI Study Chat")
+            q = st.chat_input("Ask anything...")
             if q:
                 with st.chat_message("user"):
                     st.write(q)
                 try:
-                    resp = model.generate_content(q)
+                    with st.spinner("Thinking..."):
+                        resp = model.generate_content(q)
                     with st.chat_message("assistant"):
                         st.write(resp.text)
                     if supabase:
@@ -240,55 +220,138 @@ if st.session_state.user:
                     st.error(f"Error: {e}")
         
         elif menu == "Quiz":
-            st.subheader("📝 Quiz")
-            topic = st.text_input("Topic:")
-            diff = st.selectbox("Level", ["Easy", "Medium", "Hard"])
-            if topic and st.button("Generate"):
-                try:
-                    resp = model.generate_content(f"5 multiple choice questions about {topic} ({diff} level)")
-                    st.markdown(resp.text)
-                    if supabase:
-                        supabase.table("history").insert({
-                            "user_id": st.session_state.user.id,
-                            "question": f"Quiz: {topic}",
-                            "answer": resp.text
-                        }).execute()
-                except Exception as e:
-                    st.error(f"Error: {e}")
-        
-        elif menu == "Image":
-            st.subheader("📁 Image Analysis")
-            file = st.file_uploader("Upload", type=['jpg', 'png', 'jpeg'])
-            if file:
-                try:
-                    img = PIL.Image.open(file)
-                    st.image(img, use_container_width=True)
-                    if st.button("Analyze"):
-                        resp = model.generate_content(["Explain this study material in detail", img])
-                        st.write(resp.text)
+            st.subheader("📝 Quiz Generator")
+            
+            # Input fields
+            topic = st.text_input("Enter topic (e.g., Biology, History):", key="quiz_topic")
+            difficulty = st.selectbox("Difficulty Level:", ["Easy", "Medium", "Hard"], key="quiz_diff")
+            num_questions = st.slider("Number of Questions:", 3, 10, 5, key="quiz_num")
+            
+            # Generate button - FIXED with unique key
+            if st.button("🎯 Generate Quiz", use_container_width=True, key="generate_quiz_btn"):
+                if not topic:
+                    st.error("Please enter a topic!")
+                else:
+                    try:
+                        with st.spinner("Creating your quiz..."):
+                            prompt = f"""Create a {num_questions}-question multiple choice quiz about {topic} at {difficulty} difficulty level.
+
+Format each question like this:
+**Question 1:** [question text]
+A) [option]
+B) [option]
+C) [option]
+D) [option]
+
+After all questions, provide:
+**Answer Key:**
+1. [correct answer]
+2. [correct answer]
+etc.
+"""
+                            resp = model.generate_content(prompt)
+                            
+                        st.markdown("---")
+                        st.markdown(resp.text)
+                        st.markdown("---")
+                        
+                        # Download button
+                        st.download_button(
+                            label="📥 Download Quiz",
+                            data=resp.text,
+                            file_name=f"quiz_{topic.replace(' ', '_')}.txt",
+                            mime="text/plain",
+                            key="download_quiz"
+                        )
+                        
+                        # Save to history
                         if supabase:
                             supabase.table("history").insert({
                                 "user_id": st.session_state.user.id,
-                                "question": "Image",
+                                "question": f"Quiz: {topic} ({difficulty})",
                                 "answer": resp.text
                             }).execute()
+                            
+                    except Exception as e:
+                        st.error(f"Error generating quiz: {e}")
+        
+        elif menu == "Image":
+            st.subheader("📁 Image Analysis")
+            st.write("Upload study materials like diagrams, notes, or textbook pages")
+            
+            file = st.file_uploader("Upload image:", type=['jpg', 'png', 'jpeg'], key="image_upload")
+            
+            if file:
+                try:
+                    img = PIL.Image.open(file)
+                    st.image(img, caption="Your upload", use_container_width=True)
+                    
+                    # Analysis button - FIXED
+                    if st.button("🔍 Analyze Image", use_container_width=True, key="analyze_img_btn"):
+                        with st.spinner("Analyzing image..."):
+                            resp = model.generate_content([
+                                """Analyze this study material and provide:
+1. **Summary** - What is this about?
+2. **Key Concepts** - Main ideas and topics
+3. **Important Details** - Facts, formulas, dates
+4. **Study Tips** - How to remember this material
+5. **Practice Questions** - 2-3 questions to test understanding""",
+                                img
+                            ])
+                        
+                        st.markdown("---")
+                        st.markdown(resp.text)
+                        st.markdown("---")
+                        
+                        if supabase:
+                            supabase.table("history").insert({
+                                "user_id": st.session_state.user.id,
+                                "question": "Image Analysis",
+                                "answer": resp.text
+                            }).execute()
+                            
                 except Exception as e:
                     st.error(f"Error: {e}")
         
         elif menu == "Tutor":
             st.subheader("🎯 Socratic Tutor")
-            prob = st.text_area("Your problem:")
-            if prob and st.button("Start"):
-                try:
-                    resp = model.generate_content(f"Socratic tutor for: {prob}. Ask guiding questions only.")
-                    st.write(resp.text)
-                    if supabase:
-                        supabase.table("history").insert({
-                            "user_id": st.session_state.user.id,
-                            "question": f"Tutor: {prob}",
-                            "answer": resp.text
-                        }).execute()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+            st.info("💡 The Socratic method helps you learn by asking guiding questions instead of giving direct answers.")
+            
+            problem = st.text_area("Describe your problem or question:", height=150, key="tutor_problem")
+            
+            # Start button - FIXED
+            if st.button("🚀 Start Tutoring Session", use_container_width=True, key="start_tutor_btn"):
+                if not problem:
+                    st.error("Please describe your problem first!")
+                else:
+                    try:
+                        with st.spinner("Preparing guiding questions..."):
+                            resp = model.generate_content(f"""Act as a Socratic tutor. For this student problem:
+
+"{problem}"
+
+Do NOT give the direct answer. Instead:
+1. Ask 3-4 guiding questions that help the student think through the problem
+2. Each question should lead them closer to discovering the answer themselves
+3. Use the Socratic method to develop critical thinking
+4. Be encouraging and supportive
+
+Start with: "Let me help you think through this..."
+""")
+                        
+                        st.markdown("---")
+                        st.markdown(resp.text)
+                        st.markdown("---")
+                        
+                        if supabase:
+                            supabase.table("history").insert({
+                                "user_id": st.session_state.user.id,
+                                "question": f"Socratic: {problem}",
+                                "answer": resp.text
+                            }).execute()
+                            
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
 else:
     login_screen()

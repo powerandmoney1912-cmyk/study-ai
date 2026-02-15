@@ -17,22 +17,26 @@ supabase: Client = create_client(url, key)
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
 # --- THE BUG KILLER: UNIVERSAL MODEL LOADER ---
+import google.generativeai as genai
+
+# Configure the API Key from secrets
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+
 @st.cache_resource
-def load_working_model():
-    """Tries different paths to bypass the 404 v1beta error"""
-    # Order: Standard -> Full Path -> Legacy
-    model_options = ['gemini-1.5-flash', 'models/gemini-1.5-flash', 'gemini-pro']
-    for m_id in model_options:
+def load_universal_model():
+    """Tries different paths to bypass the 404 bug"""
+    # We try 'gemini-1.5-flash' first as it's the most stable current name
+    for model_id in ['gemini-1.5-flash', 'models/gemini-1.5-flash', 'gemini-pro']:
         try:
-            test_model = genai.GenerativeModel(m_id)
-            # Send a tiny ping to verify the model exists and is reachable
-            test_model.generate_content("hi") 
-            return test_model
+            m = genai.GenerativeModel(model_id)
+            # Send a tiny test message to confirm it works
+            m.generate_content("hi") 
+            return m
         except Exception:
             continue
     return None
 
-model = load_working_model()
+model = load_universal_model()
 
 # --- 2. SESSION STATE ---
 if "user" not in st.session_state:
@@ -157,3 +161,4 @@ if st.session_state.user:
                 st.write(res.text)
 else:
     login_screen()
+

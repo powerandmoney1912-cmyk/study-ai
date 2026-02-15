@@ -1,4 +1,4 @@
-# Supabase version - Updated Feb 2025
+# Supabase version - Updated Feb 2025 - FIXED VERSION
 import streamlit as st
 import google.generativeai as genai
 from supabase import create_client, Client
@@ -134,14 +134,17 @@ def login_user(email, password):
                 
                 # Check if premium expired
                 if is_premium and premium_expires:
-                    expiry_date = datetime.fromisoformat(premium_expires)
-                    if datetime.now() > expiry_date:
-                        # Premium expired, update database
-                        supabase.table('users').update({
-                            'is_premium': False
-                        }).eq('id', user_id).execute()
-                        is_premium = False
-                        premium_expires = None
+                    try:
+                        expiry_date = datetime.fromisoformat(premium_expires)
+                        if datetime.now() > expiry_date:
+                            # Premium expired, update database
+                            supabase.table('users').update({
+                                'is_premium': False
+                            }).eq('id', user_id).execute()
+                            is_premium = False
+                            premium_expires = None
+                    except:
+                        pass
                 
                 st.session_state.user = {
                     'uid': user_id,
@@ -209,11 +212,10 @@ def get_ai_response(prompt, mode="chat"):
         return f"Sorry, I encountered an error: {str(e)}\n\nPlease try again or check your API key."
 
 def analyze_image(image_file, prompt="Explain this image"):
+    """FIXED: Updated to use current Gemini model with vision"""
     try:
-        if st.session_state.is_premium:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-        else:
-            model = genai.GenerativeModel('gemini-pro-vision')
+        # Gemini 1.5 Flash has vision built-in
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         image = Image.open(image_file)
         response = model.generate_content([prompt + " Follow NCERT curriculum.", image])
@@ -236,6 +238,7 @@ def summarize_pdf(pdf_file):
         return f"PDF error: {str(e)}"
 
 def generate_quiz(subject, difficulty, class_level, topic=None):
+    """FIXED: Improved parsing with better error handling"""
     num_questions = 10 if st.session_state.is_premium else 5
     
     prompt = f"""Generate {num_questions} NCERT {class_level} {subject} MCQs ({difficulty} level).
@@ -257,18 +260,25 @@ def generate_quiz(subject, difficulty, class_level, topic=None):
     for line in lines:
         line = line.strip()
         if line.startswith('Q'):
-            if current:
+            # Save previous question if valid
+            if current and 'question' in current and 'options' in current and len(current.get('options', {})) > 0:
                 questions.append(current)
-            current = {'question': line.split(':', 1)[1].strip() if ':' in line else line, 'options': {}}
+            current = {
+                'question': line.split(':', 1)[1].strip() if ':' in line else line, 
+                'options': {}
+            }
         elif line.startswith(('A)', 'B)', 'C)', 'D)')):
-            current['options'][line[0]] = line[2:].strip()
+            if 'options' in current:
+                current['options'][line[0]] = line[2:].strip()
         elif line.startswith('Correct:'):
             current['correct'] = line.split(':')[1].strip()[0]
         elif line.startswith('Explanation:'):
             current['explanation'] = line.split(':', 1)[1].strip()
     
-    if current:
+    # Add final question if valid
+    if current and 'question' in current and 'options' in current and len(current.get('options', {})) > 0:
         questions.append(current)
+    
     return questions
 
 def save_history(user_id, question, answer):
@@ -460,8 +470,11 @@ def show_quiz():
         st.markdown("---")
         for idx, q in enumerate(st.session_state.quiz_data):
             st.markdown(f"**Q{idx+1}:** {q['question']}")
-            answer = st.radio("", list(q['options'].keys()), 
-                            format_func=lambda x: f"{x}) {q['options'][x]}", key=f"q_{idx}")
+            # FIXED: Lambda closure issue resolved
+            options = q['options']
+            answer = st.radio("", list(options.keys()), 
+                            format_func=lambda x, opts=options: f"{x}) {opts[x]}", 
+                            key=f"q_{idx}")
             st.session_state.quiz_answers[idx] = answer
             st.markdown("---")
         
@@ -475,21 +488,4 @@ def show_quiz():
                 if is_correct:
                     st.success(f"✅ Q{idx+1}: Correct!")
                 else:
-                    st.error(f"❌ Q{idx+1}: Wrong - Answer: {q['correct']}) {q['options'][q['correct']]}")
-                if 'explanation' in q:
-                    st.caption(f"💡 {q['explanation']}")
-            
-            st.markdown(f"## Score: {score}/{len(st.session_state.quiz_data)} ({percentage:.0f}%)")
-            if percentage >= 80:
-                st.balloons()
-
-def show_multimedia():
-    st.title("🎨 Multimedia Tools")
-    
-    tab1, tab2 = st.tabs(["📷 Image", "📄 PDF"])
-    
-    with tab1:
-        uploaded_img = st.file_uploader("Upload image", type=['png', 'jpg', 'jpeg'])
-        if uploaded_img:
-            st.image(uploaded_img, width=400)
-            if st.button("Analyze"):
+                    st.error(f"❌ Q{idx+1}: Wrong - Answe

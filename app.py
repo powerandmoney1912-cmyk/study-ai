@@ -21,33 +21,38 @@ def initialize_supabase():
 
 @st.cache_resource
 def initialize_gemini():
-    """Initialize Gemini AI with multiple fallback models"""
+    """Initialize Gemini AI - FIXED 404 ERROR"""
     try:
         # Check if API key exists
         if "GOOGLE_API_KEY" not in st.secrets:
             st.error("🚨 GOOGLE_API_KEY not found in secrets!")
-            st.info("Add it to .streamlit/secrets.toml: GOOGLE_API_KEY = 'your-key'")
             return None
         
         api_key = st.secrets["GOOGLE_API_KEY"]
-        
-        # Configure Gemini
         genai.configure(api_key=api_key)
         
-        # Try multiple model versions WITHOUT testing (that's what was breaking)
-        for model_name in ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']:
+        # Try CORRECT model names in order of preference
+        model_names = [
+            'gemini-2.0-flash-exp',  # Latest experimental
+            'gemini-1.5-flash-latest',  # Latest stable flash
+            'gemini-1.5-pro-latest',  # Latest stable pro
+            'gemini-1.5-flash',  # Specific version
+            'gemini-pro'  # Fallback
+        ]
+        
+        for model_name in model_names:
             try:
                 model = genai.GenerativeModel(model_name)
-                return model  # Return immediately without testing
+                st.success(f"✅ Connected to: {model_name}")
+                return model
             except Exception as e:
                 continue
         
-        st.error("🚨 Could not load any Gemini model")
+        st.error("🚨 All model attempts failed. Check your API key at https://makersuite.google.com/app/apikey")
         return None
         
     except Exception as e:
         st.error(f"🚨 AI initialization failed: {str(e)}")
-        st.info("Make sure your GOOGLE_API_KEY is correct and active")
         return None
 
 # Initialize services
@@ -74,7 +79,7 @@ def get_daily_usage():
     except Exception as e:
         return 0
 
-# --- 5. FIXED LOGIN & GOOGLE SIGN-IN ---
+# --- 5. LOGIN SCREEN ---
 def login_screen():
     st.title("🎓 Study Master Pro")
     st.subheader("Your AI-Powered Study Companion")
@@ -83,7 +88,6 @@ def login_screen():
         st.error("Cannot connect to authentication service. Check your Supabase credentials.")
         return
     
-    # Modern Tabbed Interface
     tab_login, tab_signup = st.tabs(["Login", "Create Account"])
     
     with tab_login:
@@ -107,26 +111,19 @@ def login_screen():
                         st.error(f"Login Failed: {str(e)}")
         
         with col2:
-            # SIMPLIFIED GOOGLE SIGN-IN
             if st.button("🌐 Google Sign-In", use_container_width=True):
                 try:
-                    # This opens Google OAuth in browser
                     supabase_url = st.secrets["supabase"]["url"]
-                    redirect_url = "http://localhost:8501"  # Change to your deployed URL
+                    # For local: http://localhost:8501
+                    # For deployed: https://your-app.streamlit.app
+                    redirect_url = "http://localhost:8501"
                     
                     oauth_url = f"{supabase_url}/auth/v1/authorize?provider=google&redirect_to={redirect_url}"
                     
-                    st.markdown(f"""
-                    <a href="{oauth_url}" target="_blank">
-                        <button style="width:100%; padding:10px; background:#4285f4; color:white; border:none; border-radius:5px; cursor:pointer;">
-                            Continue with Google
-                        </button>
-                    </a>
-                    """, unsafe_allow_html=True)
-                    
-                    st.info("Note: Make sure Google provider is enabled in Supabase Dashboard → Auth → Providers")
+                    st.markdown(f'[🔗 Click here to sign in with Google]({oauth_url})')
+                    st.info("Ensure Google OAuth is enabled in Supabase Dashboard → Auth → Providers")
                 except Exception as e:
-                    st.error(f"Google auth setup error: {e}")
+                    st.error(f"Google auth error: {e}")
 
     with tab_signup:
         s_email = st.text_input("New Email", key="s_email")
@@ -153,16 +150,17 @@ def login_screen():
 # --- 6. MAIN APP ---
 if st.session_state.user:
     if not model:
-        st.error("🚨 AI service unavailable. Please check your GOOGLE_API_KEY configuration.")
+        st.error("🚨 AI service unavailable. Please check your GOOGLE_API_KEY.")
+        st.info("Get your key at: https://makersuite.google.com/app/apikey")
         if st.sidebar.button("Logout"):
             st.session_state.user = None
             st.rerun()
         st.stop()
     
-    # Sidebar: Premium & Navigation
+    # Sidebar
     st.sidebar.title("💎 Study Master")
     
-    # Redemption Zone
+    # Premium Code
     if not st.session_state.is_premium:
         with st.sidebar.expander("🔑 REDEEM PREMIUM CODE"):
             code = st.text_input("Enter Code", type="password", key="premium_code")
@@ -176,7 +174,7 @@ if st.session_state.user:
     else:
         st.sidebar.success("✨ Premium Active (250 Chats)")
 
-    # 24h Usage Meter
+    # Usage Meter
     usage = get_daily_usage()
     limit = 250 if st.session_state.is_premium else 50
     st.sidebar.metric("24h Usage", f"{usage} / {limit}")
@@ -188,9 +186,9 @@ if st.session_state.user:
         st.session_state.user = None
         st.rerun()
 
-    # --- FEATURE LOGIC ---
+    # --- FEATURES ---
     if usage >= limit:
-        st.error(f"⚠️ Daily limit reached ({usage}/{limit}). Upgrade to Premium or wait 24 hours.")
+        st.error(f"⚠️ Daily limit reached ({usage}/{limit}). Upgrade or wait 24 hours.")
     else:
         if menu == "Normal Chat":
             st.subheader("💬 AI Study Chat")
@@ -206,7 +204,6 @@ if st.session_state.user:
                     with st.chat_message("assistant"): 
                         st.write(response.text)
                     
-                    # Save to Supabase History
                     if supabase:
                         supabase.table("history").insert({
                             "user_id": st.session_state.user.id, 
@@ -215,7 +212,7 @@ if st.session_state.user:
                         }).execute()
                         
                 except Exception as e:
-                    st.error(f"Error generating response: {e}")
+                    st.error(f"Error: {e}")
         
         elif menu == "Quiz Zone":
             st.subheader("📝 Quiz Zone")
@@ -226,12 +223,11 @@ if st.session_state.user:
                 try:
                     with st.spinner("Creating quiz..."):
                         res = model.generate_content(
-                            f"Create a 5-question multiple choice quiz about {topic} at {difficulty} difficulty level. "
-                            f"Format each question clearly with options A, B, C, D."
+                            f"Create a 5-question multiple choice quiz about {topic} at {difficulty} difficulty. "
+                            f"Format: Question, then A) B) C) D) options, then blank line before next question."
                         )
                     st.markdown(res.text)
                     
-                    # Save to history
                     if supabase:
                         supabase.table("history").insert({
                             "user_id": st.session_state.user.id,
@@ -240,11 +236,11 @@ if st.session_state.user:
                         }).execute()
                         
                 except Exception as e:
-                    st.error(f"Error generating quiz: {e}")
+                    st.error(f"Error: {e}")
 
         elif menu == "File Mode":
             st.subheader("📁 Study from Files")
-            file = st.file_uploader("Upload Image (diagram, notes, textbook page)", type=['jpg', 'png', 'jpeg'])
+            file = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
             
             if file:
                 try:
@@ -254,13 +250,12 @@ if st.session_state.user:
                     if st.button("Analyze Image"):
                         with st.spinner("Analyzing..."):
                             res = model.generate_content([
-                                "Analyze this study material and provide: 1) Summary of key concepts, "
-                                "2) Important points to remember, 3) Study tips based on this content.", 
+                                "Analyze this study material. Provide: 1) Summary of key concepts "
+                                "2) Important points 3) Study tips", 
                                 img
                             ])
                         st.write(res.text)
                         
-                        # Save to history
                         if supabase:
                             supabase.table("history").insert({
                                 "user_id": st.session_state.user.id,
@@ -269,25 +264,24 @@ if st.session_state.user:
                             }).execute()
                             
                 except Exception as e:
-                    st.error(f"Error processing image: {e}")
+                    st.error(f"Error: {e}")
         
         elif menu == "Socratic Tutor":
             st.subheader("🎯 Socratic Tutor")
-            st.info("The Socratic method helps you learn by asking guiding questions instead of giving direct answers.")
+            st.info("Learn through guided questions instead of direct answers.")
             
-            problem = st.text_area("Describe your problem or question:")
+            problem = st.text_area("Describe your problem:")
             
-            if problem and st.button("Start Tutoring Session"):
+            if problem and st.button("Start Session"):
                 try:
-                    with st.spinner("Preparing questions..."):
+                    with st.spinner("Preparing..."):
                         res = model.generate_content(
-                            f"Act as a Socratic tutor. For this problem: '{problem}', "
-                            f"ask 3-4 guiding questions that help the student discover the answer themselves. "
-                            f"Do NOT give the direct answer. Focus on leading questions."
+                            f"Act as a Socratic tutor for: '{problem}'. "
+                            f"Ask 3-4 guiding questions to help discover the answer. "
+                            f"Don't give direct answers."
                         )
                     st.write(res.text)
                     
-                    # Save to history
                     if supabase:
                         supabase.table("history").insert({
                             "user_id": st.session_state.user.id,

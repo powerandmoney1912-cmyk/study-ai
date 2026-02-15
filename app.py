@@ -5,6 +5,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
+# --- 0. GOOGLE VERIFICATION ---
+# This hidden tag tells Google you own the site.
+st.markdown('<meta name="google-site-verification" content="PASTE_YOUR_CODE_HERE" />', unsafe_allow_html=True)
+
 # --- 1. SETUP ---
 st.set_page_config(page_title="Study Master Pro", layout="wide")
 API_KEY = st.secrets["GOOGLE_API_KEY"]

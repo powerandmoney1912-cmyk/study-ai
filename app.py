@@ -1,7 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
-import firebase_admin
-from firebase_admin import credentials, auth, firestore
+from supabase import create_client, Client
 from datetime import datetime
 import PyPDF2
 from PIL import Image
@@ -10,25 +9,19 @@ import json
 # Page Configuration
 st.set_page_config(page_title="AI Study Assistant", page_icon="🎓", layout="wide")
 
-# Initialize Firebase with better error handling
-if not firebase_admin._apps:
+# Initialize Supabase
+@st.cache_resource
+def init_supabase():
     try:
-        # Method 1: Try direct dict conversion
-        firebase_config = dict(st.secrets["firebase"])
-        
-        # Fix the private_key - remove any extra escaping
-        if "private_key" in firebase_config:
-            # Replace literal \n with actual newlines
-            firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
-        
-        cred = credentials.Certificate(firebase_config)
-        firebase_admin.initialize_app(cred)
+        supabase_url = st.secrets["SUPABASE_URL"]
+        supabase_key = st.secrets["SUPABASE_KEY"]
+        return create_client(supabase_url, supabase_key)
     except Exception as e:
-        st.error(f"Firebase initialization error: {str(e)}")
-        st.info("Please check your Firebase credentials in secrets")
+        st.error(f"Supabase initialization error: {str(e)}")
+        st.info("Please check your Supabase credentials in secrets")
         st.stop()
 
-db = firestore.client()
+supabase: Client = init_supabase()
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # PREMIUM CODES
@@ -82,55 +75,89 @@ st.markdown("""<style>
 # Authentication Functions
 def create_account(email, password, name):
     try:
-        user = auth.create_user(email=email, password=password, display_name=name)
-        db.collection('users').document(user.uid).set({
-            'name': name, 
-            'email': email, 
-            'created_at': datetime.now(), 
-            'total_questions': 0,
-            'is_premium': False,
-            'premium_activated_at': None
+        # Create auth user
+        auth_response = supabase.auth.sign_up({
+            "email": email,
+            "password": password,
+            "options": {
+                "data": {
+                    "name": name
+                }
+            }
         })
-        return True, "Account created successfully!"
+        
+        if auth_response.user:
+            # Create user profile in users table
+            supabase.table('users').insert({
+                'id': auth_response.user.id,
+                'name': name,
+                'email': email,
+                'created_at': datetime.now().isoformat(),
+                'total_questions': 0,
+                'is_premium': False,
+                'premium_activated_at': None
+            }).execute()
+            
+            return True, "Account created successfully! Please check your email to verify."
+        else:
+            return False, "Account creation failed"
+            
     except Exception as e:
         error_msg = str(e)
-        if "EMAIL_EXISTS" in error_msg:
+        if "User already registered" in error_msg or "already registered" in error_msg:
             return False, "This email is already registered!"
-        elif "INVALID_EMAIL" in error_msg:
+        elif "Invalid email" in error_msg:
             return False, "Invalid email address!"
-        elif "WEAK_PASSWORD" in error_msg:
+        elif "Password should be" in error_msg or "weak" in error_msg.lower():
             return False, "Password is too weak. Use at least 6 characters!"
         return False, f"Error: {error_msg}"
 
 def login_user(email, password):
     try:
-        users = auth.list_users().iterate_all()
-        for user in users:
-            if user.email == email:
-                # Get premium status
-                user_doc = db.collection('users').document(user.uid).get()
-                is_premium = user_doc.to_dict().get('is_premium', False) if user_doc.exists else False
+        # Sign in with Supabase Auth
+        auth_response = supabase.auth.sign_in_with_password({
+            "email": email,
+            "password": password
+        })
+        
+        if auth_response.user:
+            user_id = auth_response.user.id
+            
+            # Get user data from users table
+            user_data = supabase.table('users').select('*').eq('id', user_id).execute()
+            
+            if user_data.data and len(user_data.data) > 0:
+                user_info = user_data.data[0]
+                is_premium = user_info.get('is_premium', False)
                 
                 st.session_state.user = {
-                    'uid': user.uid, 
-                    'email': user.email, 
-                    'name': user.display_name or 'User'
+                    'uid': user_id,
+                    'email': auth_response.user.email,
+                    'name': user_info.get('name', 'User')
                 }
                 st.session_state.is_premium = is_premium
                 return True, "Login successful!"
-        return False, "User not found. Please check your email or sign up."
+            else:
+                return False, "User profile not found"
+        else:
+            return False, "Login failed"
+            
     except Exception as e:
-        return False, f"Login error: {str(e)}"
+        error_msg = str(e)
+        if "Invalid login credentials" in error_msg:
+            return False, "Invalid email or password!"
+        return False, f"Login error: {error_msg}"
 
 def activate_premium(code):
     """Activate premium with code"""
     if code in PREMIUM_CODES:
         try:
-            db.collection('users').document(st.session_state.user['uid']).update({
+            supabase.table('users').update({
                 'is_premium': True,
-                'premium_activated_at': datetime.now(),
+                'premium_activated_at': datetime.now().isoformat(),
                 'premium_code_used': code
-            })
+            }).eq('id', st.session_state.user['uid']).execute()
+            
             st.session_state.is_premium = True
             return True, f"✅ Premium Activated! {PREMIUM_CODES[code]}"
         except Exception as e:
@@ -225,14 +252,23 @@ def generate_quiz(subject, difficulty, class_level, topic=None):
 
 def save_history(user_id, question, answer):
     try:
-        db.collection('users').document(user_id).collection('history').add({
-            'question': question, 
-            'answer': answer, 
-            'timestamp': datetime.now(),
+        # Insert into history table
+        supabase.table('history').insert({
+            'user_id': user_id,
+            'question': question,
+            'answer': answer,
+            'timestamp': datetime.now().isoformat(),
             'model_used': 'premium' if st.session_state.is_premium else 'free'
-        })
-        db.collection('users').document(user_id).update({'total_questions': firestore.Increment(1)})
-    except: 
+        }).execute()
+        
+        # Increment total_questions
+        user_data = supabase.table('users').select('total_questions').eq('id', user_id).execute()
+        if user_data.data:
+            current_count = user_data.data[0].get('total_questions', 0)
+            supabase.table('users').update({
+                'total_questions': current_count + 1
+            }).eq('id', user_id).execute()
+    except Exception as e:
         pass
 
 # UI Functions
@@ -315,14 +351,19 @@ def show_sidebar():
         
         st.markdown("---")
         try:
-            user_data = db.collection('users').document(st.session_state.user['uid']).get().to_dict()
-            st.metric("Questions", user_data.get('total_questions', 0))
+            user_data = supabase.table('users').select('total_questions').eq('id', st.session_state.user['uid']).execute()
+            if user_data.data:
+                st.metric("Questions", user_data.data[0].get('total_questions', 0))
         except:
             pass
         
         st.caption("🇮🇳 NCERT Aligned")
         
         if st.button("🚪 Logout", use_container_width=True):
+            try:
+                supabase.auth.sign_out()
+            except:
+                pass
             st.session_state.user = None
             st.session_state.chat_history = []
             st.session_state.is_premium = False
@@ -433,47 +474,35 @@ def show_dashboard():
     st.title("📊 Dashboard")
     
     try:
-        user_data = db.collection('users').document(st.session_state.user['uid']).get().to_dict()
+        user_data = supabase.table('users').select('*').eq('id', st.session_state.user['uid']).execute()
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Questions", user_data.get('total_questions', 0))
-        with col2:
-            st.metric("Status", "👑 Premium" if st.session_state.is_premium else "🔓 Free")
-        
-        st.markdown("---")
-        st.subheader("Recent History")
-        
-        history = db.collection('users').document(st.session_state.user['uid']).collection('history').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(10).stream()
-        
-        for item in history:
-            data = item.to_dict()
-            with st.expander(f"❓ {data['question'][:80]}..."):
-                st.markdown(f"**Q:** {data['question']}")
-                st.markdown(f"**A:** {data['answer']}")
-                st.caption(data['timestamp'].strftime('%Y-%m-%d %H:%M'))
-    except:
+        if user_data.data:
+            user_info = user_data.data[0]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Questions", user_info.get('total_questions', 0))
+            with col2:
+                st.metric("Status", "👑 Premium" if st.session_state.is_premium else "🔓 Free")
+            
+            st.markdown("---")
+            st.subheader("Recent History")
+            
+            history = supabase.table('history').select('*').eq('user_id', st.session_state.user['uid']).order('timestamp', desc=True).limit(10).execute()
+            
+            if history.data:
+                for item in history.data:
+                    with st.expander(f"❓ {item['question'][:80]}..."):
+                        st.markdown(f"**Q:** {item['question']}")
+                        st.markdown(f"**A:** {item['answer']}")
+                        timestamp = datetime.fromisoformat(item['timestamp'])
+                        st.caption(timestamp.strftime('%Y-%m-%d %H:%M'))
+            else:
+                st.info("No history yet. Start asking questions!")
+    except Exception as e:
         st.info("Start using the app to see stats!")
+        st.error(f"Error: {str(e)}")
 
 # Main
 def main():
     if not st.session_state.user:
-        show_login()
-    else:
-        show_sidebar()
-        
-        if st.session_state.study_mode == "AI Chat":
-            show_chat("chat")
-        elif st.session_state.study_mode == "Socratic Tutor":
-            show_chat("socratic")
-        elif st.session_state.study_mode == "Simplifier":
-            show_chat("simplify")
-        elif st.session_state.study_mode == "Quiz Generator":
-            show_quiz()
-        elif st.session_state.study_mode == "Multimedia Tools":
-            show_multimedia()
-        elif st.session_state.study_mode == "Dashboard":
-            show_dashboard()
-
-if __name__ == "__main__":
-    main()

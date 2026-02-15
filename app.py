@@ -1,7 +1,8 @@
+# Supabase version - Updated Feb 2025
 import streamlit as st
 import google.generativeai as genai
 from supabase import create_client, Client
-from datetime import datetime
+from datetime import datetime, timedelta
 import PyPDF2
 from PIL import Image
 import json
@@ -24,12 +25,14 @@ def init_supabase():
 supabase: Client = init_supabase()
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# PREMIUM CODES
+# PREMIUM CODES WITH EXPIRY
 PREMIUM_CODES = {
-    "PREMIUM2024": "Valid until Dec 2024",
-    "STUDENT100": "Student Special Access",
-    "TEACHER50": "Teacher Premium",
-    "LIFETIME": "Lifetime Premium Access"
+    "PREMIUM2024": {"description": "Valid until Dec 2024", "days": 365},
+    "STUDENT100": {"description": "Student Special Access", "days": 365},
+    "TEACHER50": {"description": "Teacher Premium", "days": 365},
+    "LIFETIME": {"description": "Lifetime Premium Access", "days": 36500},
+    "Aarya": {"description": "1 Day Premium", "days": 1},
+    "Manu Aarya": {"description": "27 Days Premium", "days": 27}
 }
 
 # Initialize session state
@@ -41,6 +44,8 @@ if 'study_mode' not in st.session_state:
     st.session_state.study_mode = "AI Chat"
 if 'is_premium' not in st.session_state:
     st.session_state.is_premium = False
+if 'premium_expires' not in st.session_state:
+    st.session_state.premium_expires = None
 
 # NCERT Configuration
 NCERT_SUBJECTS = {
@@ -75,7 +80,6 @@ st.markdown("""<style>
 # Authentication Functions
 def create_account(email, password, name):
     try:
-        # Create auth user
         auth_response = supabase.auth.sign_up({
             "email": email,
             "password": password,
@@ -87,7 +91,6 @@ def create_account(email, password, name):
         })
         
         if auth_response.user:
-            # Create user profile in users table
             supabase.table('users').insert({
                 'id': auth_response.user.id,
                 'name': name,
@@ -95,7 +98,8 @@ def create_account(email, password, name):
                 'created_at': datetime.now().isoformat(),
                 'total_questions': 0,
                 'is_premium': False,
-                'premium_activated_at': None
+                'premium_activated_at': None,
+                'premium_expires_at': None
             }).execute()
             
             return True, "Account created successfully! Please check your email to verify."
@@ -114,7 +118,6 @@ def create_account(email, password, name):
 
 def login_user(email, password):
     try:
-        # Sign in with Supabase Auth
         auth_response = supabase.auth.sign_in_with_password({
             "email": email,
             "password": password
@@ -122,13 +125,23 @@ def login_user(email, password):
         
         if auth_response.user:
             user_id = auth_response.user.id
-            
-            # Get user data from users table
             user_data = supabase.table('users').select('*').eq('id', user_id).execute()
             
             if user_data.data and len(user_data.data) > 0:
                 user_info = user_data.data[0]
                 is_premium = user_info.get('is_premium', False)
+                premium_expires = user_info.get('premium_expires_at')
+                
+                # Check if premium expired
+                if is_premium and premium_expires:
+                    expiry_date = datetime.fromisoformat(premium_expires)
+                    if datetime.now() > expiry_date:
+                        # Premium expired, update database
+                        supabase.table('users').update({
+                            'is_premium': False
+                        }).eq('id', user_id).execute()
+                        is_premium = False
+                        premium_expires = None
                 
                 st.session_state.user = {
                     'uid': user_id,
@@ -136,6 +149,7 @@ def login_user(email, password):
                     'name': user_info.get('name', 'User')
                 }
                 st.session_state.is_premium = is_premium
+                st.session_state.premium_expires = premium_expires
                 return True, "Login successful!"
             else:
                 return False, "User profile not found"
@@ -152,14 +166,20 @@ def activate_premium(code):
     """Activate premium with code"""
     if code in PREMIUM_CODES:
         try:
+            code_info = PREMIUM_CODES[code]
+            expiry_date = datetime.now() + timedelta(days=code_info['days'])
+            
             supabase.table('users').update({
                 'is_premium': True,
                 'premium_activated_at': datetime.now().isoformat(),
+                'premium_expires_at': expiry_date.isoformat(),
                 'premium_code_used': code
             }).eq('id', st.session_state.user['uid']).execute()
             
             st.session_state.is_premium = True
-            return True, f"✅ Premium Activated! {PREMIUM_CODES[code]}"
+            st.session_state.premium_expires = expiry_date.isoformat()
+            
+            return True, f"✅ Premium Activated! {code_info['description']} - Expires: {expiry_date.strftime('%Y-%m-%d')}"
         except Exception as e:
             return False, f"Error: {str(e)}"
     else:
@@ -168,7 +188,6 @@ def activate_premium(code):
 # AI Functions
 def get_ai_response(prompt, mode="chat"):
     try:
-        # Premium: Gemini 1.5 Flash, Free: Gemini Pro
         if st.session_state.is_premium:
             model = genai.GenerativeModel('gemini-1.5-flash')
             model_name = "⚡ Gemini 1.5 Flash"
@@ -238,7 +257,8 @@ def generate_quiz(subject, difficulty, class_level, topic=None):
     for line in lines:
         line = line.strip()
         if line.startswith('Q'):
-            if current: questions.append(current)
+            if current:
+                questions.append(current)
             current = {'question': line.split(':', 1)[1].strip() if ':' in line else line, 'options': {}}
         elif line.startswith(('A)', 'B)', 'C)', 'D)')):
             current['options'][line[0]] = line[2:].strip()
@@ -247,12 +267,12 @@ def generate_quiz(subject, difficulty, class_level, topic=None):
         elif line.startswith('Explanation:'):
             current['explanation'] = line.split(':', 1)[1].strip()
     
-    if current: questions.append(current)
+    if current:
+        questions.append(current)
     return questions
 
 def save_history(user_id, question, answer):
     try:
-        # Insert into history table
         supabase.table('history').insert({
             'user_id': user_id,
             'question': question,
@@ -261,7 +281,6 @@ def save_history(user_id, question, answer):
             'model_used': 'premium' if st.session_state.is_premium else 'free'
         }).execute()
         
-        # Increment total_questions
         user_data = supabase.table('users').select('total_questions').eq('id', user_id).execute()
         if user_data.data:
             current_count = user_data.data[0].get('total_questions', 0)
@@ -322,6 +341,16 @@ def show_sidebar():
     with st.sidebar:
         if st.session_state.is_premium:
             st.markdown('<div class="premium-badge">👑 PREMIUM USER</div>', unsafe_allow_html=True)
+            if st.session_state.premium_expires:
+                try:
+                    expiry_date = datetime.fromisoformat(st.session_state.premium_expires)
+                    days_left = (expiry_date - datetime.now()).days
+                    if days_left > 0:
+                        st.info(f"⏰ Premium expires in {days_left} days")
+                    else:
+                        st.warning("⚠️ Premium expired")
+                except:
+                    pass
         
         st.title(f"👋 {st.session_state.user['name']}")
         
@@ -332,6 +361,10 @@ def show_sidebar():
                 st.write("✅ Gemini 1.5 Flash (Faster)")
                 st.write("✅ 10 Quiz Questions")
                 st.write("✅ Detailed Summaries")
+                st.write("")
+                st.write("**Available Codes:**")
+                st.write("• `Aarya` - 1 Day")
+                st.write("• `Manu Aarya` - 27 Days")
                 
                 premium_code = st.text_input("Premium Code", type="password", key="premium_input")
                 if st.button("Activate", key="activate_btn"):
@@ -367,6 +400,7 @@ def show_sidebar():
             st.session_state.user = None
             st.session_state.chat_history = []
             st.session_state.is_premium = False
+            st.session_state.premium_expires = None
             st.rerun()
 
 def show_chat(mode="chat"):
@@ -459,50 +493,3 @@ def show_multimedia():
         if uploaded_img:
             st.image(uploaded_img, width=400)
             if st.button("Analyze"):
-                with st.spinner("Analyzing..."):
-                    result = analyze_image(uploaded_img)
-                    st.markdown(result)
-    
-    with tab2:
-        uploaded_pdf = st.file_uploader("Upload PDF", type=['pdf'])
-        if uploaded_pdf and st.button("Summarize"):
-            with st.spinner("Processing..."):
-                summary = summarize_pdf(uploaded_pdf)
-                st.markdown(summary)
-
-def show_dashboard():
-    st.title("📊 Dashboard")
-    
-    try:
-        user_data = supabase.table('users').select('*').eq('id', st.session_state.user['uid']).execute()
-        
-        if user_data.data:
-            user_info = user_data.data[0]
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Questions", user_info.get('total_questions', 0))
-            with col2:
-                st.metric("Status", "👑 Premium" if st.session_state.is_premium else "🔓 Free")
-            
-            st.markdown("---")
-            st.subheader("Recent History")
-            
-            history = supabase.table('history').select('*').eq('user_id', st.session_state.user['uid']).order('timestamp', desc=True).limit(10).execute()
-            
-            if history.data:
-                for item in history.data:
-                    with st.expander(f"❓ {item['question'][:80]}..."):
-                        st.markdown(f"**Q:** {item['question']}")
-                        st.markdown(f"**A:** {item['answer']}")
-                        timestamp = datetime.fromisoformat(item['timestamp'])
-                        st.caption(timestamp.strftime('%Y-%m-%d %H:%M'))
-            else:
-                st.info("No history yet. Start asking questions!")
-    except Exception as e:
-        st.info("Start using the app to see stats!")
-        st.error(f"Error: {str(e)}")
-
-# Main
-def main():
-    if not st.session_state.user:

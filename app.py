@@ -36,7 +36,7 @@ with st.sidebar:
     st.title("🎓 Study Dashboard")
     access_code = st.text_input("Enter Premium Code:", type="password")
     
-    if access_code == "STUDY2026":
+    if access_code == "AARYATHEKING":
         is_premium = True
         st.success("✨ Premium Unlocked!")
         selected_model = 'gemini-2.5-flash'  # Smarter Model
@@ -86,3 +86,4 @@ if prompt := st.chat_input("What are we learning today?"):
                 st.error("⏳ Limit reached! Try the Premium code or wait a few minutes.")
             else:
                 st.error(f"⚠️ Error: {e}")
+

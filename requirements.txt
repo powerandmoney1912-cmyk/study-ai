@@ -7,4 +7,3 @@ langchain-community
 langchain-google-genai
 RecursiveCharacterTextSplitter
 faiss-cpu
-

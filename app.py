@@ -1,80 +1,128 @@
 import streamlit as st
-import google.generativeai as genai
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 import PIL.Image
+import os
 
 # --- 1. INITIAL SETUP ---
 st.set_page_config(page_title="Study Master Pro", layout="centered", page_icon="🎓")
 
-# --- 2. SAFE INITIALIZATION WITH ERROR HANDLING ---
+# --- 2. SUPABASE INIT ---
 @st.cache_resource
 def initialize_supabase():
-    """Initialize Supabase with error handling"""
     try:
         url = st.secrets["supabase"]["url"]
         key = st.secrets["supabase"]["key"]
         return create_client(url, key)
     except Exception as e:
-        st.error(f"🚨 Supabase initialization failed: {e}")
+        st.error(f"Supabase failed: {e}")
         return None
 
+# --- 3. BULLETPROOF GEMINI INIT - AUTO-DETECTS WORKING MODEL ---
 @st.cache_resource
 def initialize_gemini():
-    """Initialize Gemini AI - ULTIMATE FIX"""
+    """Most powerful auto-detection code - tries EVERYTHING"""
     try:
+        # Check API key exists
         if "GOOGLE_API_KEY" not in st.secrets:
-            st.error("🚨 GOOGLE_API_KEY not found in secrets!")
+            st.error("GOOGLE_API_KEY not in secrets!")
             return None
         
-        api_key = st.secrets["GOOGLE_API_KEY"]
+        api_key = st.secrets["GOOGLE_API_KEY"].strip()
+        
+        if not api_key or len(api_key) < 20:
+            st.error("API key too short or empty!")
+            return None
+        
+        # Import and configure
+        import google.generativeai as genai
         genai.configure(api_key=api_key)
         
-        # List all available models first
+        # STEP 1: List ALL available models from YOUR API key
+        st.info("🔍 Scanning for available AI models...")
+        
         try:
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            st.info(f"Available models: {', '.join(available_models[:3])}")
-        except:
-            pass
-        
-        # Try these model names WITHOUT the "models/" prefix
-        model_names = [
-            'gemini-pro',           # Most compatible
-            'gemini-1.5-pro',
-            'gemini-1.5-flash',
-        ]
-        
-        for model_name in model_names:
-            try:
-                # Don't add "models/" prefix - let the library handle it
-                model = genai.GenerativeModel(model_name)
-                st.success(f"✅ Using: {model_name}")
-                return model
-            except Exception as e:
-                st.warning(f"Tried {model_name}: {str(e)[:50]}")
-                continue
-        
-        st.error("🚨 No compatible models found. Your API key may be invalid or expired.")
-        st.info("Get a new key at: https://aistudio.google.com/app/apikey")
-        return None
-        
+            all_models = genai.list_models()
+            
+            # Filter models that support content generation
+            valid_models = [
+                m for m in all_models 
+                if 'generateContent' in m.supported_generation_methods
+            ]
+            
+            if not valid_models:
+                st.error("No models support content generation with your API key!")
+                st.info("Create a NEW key at: https://aistudio.google.com/app/apikey")
+                return None
+            
+            # Show what we found
+            model_names = [m.name for m in valid_models]
+            st.success(f"✅ Found {len(model_names)} compatible models")
+            
+            # STEP 2: Try each model until one works
+            for model_info in valid_models:
+                model_name = model_info.name
+                
+                # Try with full name (e.g., "models/gemini-pro")
+                try:
+                    st.info(f"Testing: {model_name}")
+                    model = genai.GenerativeModel(model_name)
+                    
+                    # Quick test
+                    response = model.generate_content("Say 'ready'")
+                    if response.text:
+                        st.success(f"🎉 CONNECTED TO: {model_name}")
+                        return model
+                except Exception as e:
+                    st.warning(f"❌ {model_name} failed: {str(e)[:50]}")
+                
+                # Try without "models/" prefix
+                try:
+                    short_name = model_name.replace("models/", "")
+                    st.info(f"Testing: {short_name}")
+                    model = genai.GenerativeModel(short_name)
+                    
+                    response = model.generate_content("Say 'ready'")
+                    if response.text:
+                        st.success(f"🎉 CONNECTED TO: {short_name}")
+                        return model
+                except Exception as e:
+                    st.warning(f"❌ {short_name} failed: {str(e)[:50]}")
+            
+            # If we get here, nothing worked
+            st.error("All models failed to initialize!")
+            st.error("Your API key may be:")
+            st.error("1. Expired")
+            st.error("2. From wrong service (Vertex AI vs AI Studio)")
+            st.error("3. Invalid or restricted")
+            st.info("Solution: Generate NEW key at https://aistudio.google.com/app/apikey")
+            return None
+            
+        except Exception as e:
+            st.error(f"Failed to list models: {str(e)}")
+            st.error("This usually means:")
+            st.error("1. Invalid API key format")
+            st.error("2. Network/permission issue")
+            st.error("3. Using wrong Google service")
+            st.info("Get new key: https://aistudio.google.com/app/apikey")
+            return None
+            
     except Exception as e:
-        st.error(f"🚨 AI initialization failed: {str(e)}")
+        st.error(f"Fatal error: {str(e)}")
         return None
 
-# Initialize services
+# Initialize
 supabase = initialize_supabase()
 model = initialize_gemini()
 
-# --- 3. SESSION STATE ---
+# --- 4. SESSION STATE ---
 if "user" not in st.session_state:
     st.session_state.user = None
 if "is_premium" not in st.session_state:
     st.session_state.is_premium = False
 
-# --- 4. USAGE TRACKER (24H RESET) ---
+# --- 5. USAGE TRACKER ---
 def get_daily_usage():
-    """Checks Supabase for messages in the last 24 hours"""
     if not supabase or not st.session_state.user:
         return 0
     try:
@@ -83,81 +131,58 @@ def get_daily_usage():
             "user_id", st.session_state.user.id
         ).gte("created_at", time_threshold).execute()
         return res.count if res.count else 0
-    except Exception:
+    except:
         return 0
 
-# --- 5. LOGIN SCREEN ---
+# --- 6. LOGIN SCREEN ---
 def login_screen():
     st.title("🎓 Study Master Pro")
     st.subheader("Your AI-Powered Study Companion")
     
     if not supabase:
-        st.error("Cannot connect to authentication service. Check your Supabase credentials.")
+        st.error("Supabase connection failed.")
         return
     
-    tab_login, tab_signup = st.tabs(["Login", "Create Account"])
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
     
-    with tab_login:
+    with tab1:
         email = st.text_input("Email", key="l_email")
         password = st.text_input("Password", type="password", key="l_pass")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Log In", use_container_width=True):
-                if not email or not password:
-                    st.error("Please enter both email and password")
-                else:
-                    try:
-                        res = supabase.auth.sign_in_with_password({
-                            "email": email, 
-                            "password": password
-                        })
-                        st.session_state.user = res.user
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Login Failed: {str(e)}")
-        
-        with col2:
-            if st.button("🌐 Google Sign-In", use_container_width=True):
+        if st.button("Log In", use_container_width=True):
+            if email and password:
                 try:
-                    supabase_url = st.secrets["supabase"]["url"]
-                    redirect_url = "http://localhost:8501"
-                    
-                    oauth_url = f"{supabase_url}/auth/v1/authorize?provider=google&redirect_to={redirect_url}"
-                    
-                    st.markdown(f'[🔗 Click to sign in with Google]({oauth_url})')
-                    st.info("Enable Google OAuth in Supabase Dashboard → Auth → Providers")
+                    res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                    st.session_state.user = res.user
+                    st.rerun()
                 except Exception as e:
-                    st.error(f"Google auth error: {e}")
-
-    with tab_signup:
-        s_email = st.text_input("New Email", key="s_email")
-        s_pass = st.text_input("New Password (min 6 characters)", type="password", key="s_pass")
-        s_pass_confirm = st.text_input("Confirm Password", type="password", key="s_pass_confirm")
+                    st.error(f"Login failed: {e}")
+            else:
+                st.error("Enter email and password")
+    
+    with tab2:
+        new_email = st.text_input("Email", key="s_email")
+        new_pass = st.text_input("Password (6+ chars)", type="password", key="s_pass")
+        confirm_pass = st.text_input("Confirm Password", type="password", key="s_confirm")
         
-        if st.button("Sign Up", use_container_width=True):
-            if not s_email or not s_pass:
-                st.error("Please fill in all fields")
-            elif len(s_pass) < 6:
-                st.error("Password must be at least 6 characters")
-            elif s_pass != s_pass_confirm:
-                st.error("Passwords do not match")
+        if st.button("Create Account", use_container_width=True):
+            if not new_email or not new_pass:
+                st.error("Fill all fields")
+            elif len(new_pass) < 6:
+                st.error("Password too short")
+            elif new_pass != confirm_pass:
+                st.error("Passwords don't match")
             else:
                 try:
-                    res = supabase.auth.sign_up({
-                        "email": s_email, 
-                        "password": s_pass
-                    })
-                    st.success("✅ Account created! Check your email to verify, then log in.")
+                    supabase.auth.sign_up({"email": new_email, "password": new_pass})
+                    st.success("Account created! Check email to verify.")
                 except Exception as e:
-                    st.error(f"Signup Failed: {str(e)}")
+                    st.error(f"Signup failed: {e}")
 
-# --- 6. MAIN APP ---
+# --- 7. MAIN APP ---
 if st.session_state.user:
     if not model:
-        st.error("🚨 AI service unavailable.")
-        st.warning("Please generate a NEW API key at: https://aistudio.google.com/app/apikey")
-        st.info("Your current key may be expired or for an older API version.")
+        st.error("⚠️ AI unavailable. Check errors above.")
         if st.sidebar.button("Logout"):
             st.session_state.user = None
             st.rerun()
@@ -166,137 +191,104 @@ if st.session_state.user:
     # Sidebar
     st.sidebar.title("💎 Study Master")
     
-    # Premium Code
+    # Premium
     if not st.session_state.is_premium:
-        with st.sidebar.expander("🔑 REDEEM PREMIUM CODE"):
-            code = st.text_input("Enter Code", type="password", key="premium_code")
+        with st.sidebar.expander("🔑 Premium Code"):
+            code = st.text_input("Code", type="password", key="prem")
             if st.button("Activate"):
                 if code == "STUDY777":
                     st.session_state.is_premium = True
-                    st.success("Premium Activated!")
                     st.rerun()
                 else:
-                    st.error("Invalid Code")
+                    st.error("Invalid")
     else:
-        st.sidebar.success("✨ Premium Active (250 Chats)")
-
-    # Usage Meter
+        st.sidebar.success("✨ Premium Active")
+    
+    # Usage
     usage = get_daily_usage()
     limit = 250 if st.session_state.is_premium else 50
-    st.sidebar.metric("24h Usage", f"{usage} / {limit}")
+    st.sidebar.metric("24h Usage", f"{usage}/{limit}")
     st.sidebar.progress(min(usage/limit, 1.0))
-
-    menu = st.sidebar.radio("Navigation", ["Normal Chat", "Quiz Zone", "File Mode", "Socratic Tutor"])
+    
+    menu = st.sidebar.radio("Menu", ["Chat", "Quiz", "Image", "Tutor"])
     
     if st.sidebar.button("Logout"):
         st.session_state.user = None
         st.rerun()
-
-    # --- FEATURES ---
+    
+    # Features
     if usage >= limit:
-        st.error(f"⚠️ Daily limit reached ({usage}/{limit}). Upgrade or wait 24 hours.")
+        st.error(f"Limit reached ({usage}/{limit})")
     else:
-        if menu == "Normal Chat":
-            st.subheader("💬 AI Study Chat")
-            prompt = st.chat_input("Ask a question...")
-            if prompt:
-                with st.chat_message("user"): 
-                    st.write(prompt)
-                
+        if menu == "Chat":
+            st.subheader("💬 Chat")
+            q = st.chat_input("Ask...")
+            if q:
+                with st.chat_message("user"):
+                    st.write(q)
                 try:
-                    with st.spinner("Thinking..."):
-                        response = model.generate_content(prompt)
-                    
-                    with st.chat_message("assistant"): 
-                        st.write(response.text)
-                    
+                    resp = model.generate_content(q)
+                    with st.chat_message("assistant"):
+                        st.write(resp.text)
                     if supabase:
                         supabase.table("history").insert({
-                            "user_id": st.session_state.user.id, 
-                            "question": prompt, 
-                            "answer": response.text
+                            "user_id": st.session_state.user.id,
+                            "question": q,
+                            "answer": resp.text
                         }).execute()
-                        
                 except Exception as e:
                     st.error(f"Error: {e}")
         
-        elif menu == "Quiz Zone":
-            st.subheader("📝 Quiz Zone")
-            topic = st.text_input("Enter a topic:")
-            difficulty = st.selectbox("Difficulty", ["Easy", "Medium", "Hard"])
-            
-            if topic and st.button("Generate Quiz"):
+        elif menu == "Quiz":
+            st.subheader("📝 Quiz")
+            topic = st.text_input("Topic:")
+            diff = st.selectbox("Level", ["Easy", "Medium", "Hard"])
+            if topic and st.button("Generate"):
                 try:
-                    with st.spinner("Creating quiz..."):
-                        res = model.generate_content(
-                            f"Create a 5-question multiple choice quiz about {topic} at {difficulty} difficulty. "
-                            f"Format: Question, then A) B) C) D) options, then blank line before next question."
-                        )
-                    st.markdown(res.text)
-                    
+                    resp = model.generate_content(f"5 multiple choice questions about {topic} ({diff} level)")
+                    st.markdown(resp.text)
                     if supabase:
                         supabase.table("history").insert({
                             "user_id": st.session_state.user.id,
                             "question": f"Quiz: {topic}",
-                            "answer": res.text
+                            "answer": resp.text
                         }).execute()
-                        
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-        elif menu == "File Mode":
-            st.subheader("📁 Study from Files")
-            file = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
-            
-            if file:
-                try:
-                    img = PIL.Image.open(file)
-                    st.image(img, caption="Uploaded Image", use_container_width=True)
-                    
-                    if st.button("Analyze Image"):
-                        with st.spinner("Analyzing..."):
-                            res = model.generate_content([
-                                "Analyze this study material. Provide: 1) Summary of key concepts "
-                                "2) Important points 3) Study tips", 
-                                img
-                            ])
-                        st.write(res.text)
-                        
-                        if supabase:
-                            supabase.table("history").insert({
-                                "user_id": st.session_state.user.id,
-                                "question": "Image Analysis",
-                                "answer": res.text
-                            }).execute()
-                            
                 except Exception as e:
                     st.error(f"Error: {e}")
         
-        elif menu == "Socratic Tutor":
-            st.subheader("🎯 Socratic Tutor")
-            st.info("Learn through guided questions instead of direct answers.")
-            
-            problem = st.text_area("Describe your problem:")
-            
-            if problem and st.button("Start Session"):
+        elif menu == "Image":
+            st.subheader("📁 Image Analysis")
+            file = st.file_uploader("Upload", type=['jpg', 'png', 'jpeg'])
+            if file:
                 try:
-                    with st.spinner("Preparing..."):
-                        res = model.generate_content(
-                            f"Act as a Socratic tutor for: '{problem}'. "
-                            f"Ask 3-4 guiding questions to help discover the answer. "
-                            f"Don't give direct answers."
-                        )
-                    st.write(res.text)
-                    
+                    img = PIL.Image.open(file)
+                    st.image(img, use_container_width=True)
+                    if st.button("Analyze"):
+                        resp = model.generate_content(["Explain this study material in detail", img])
+                        st.write(resp.text)
+                        if supabase:
+                            supabase.table("history").insert({
+                                "user_id": st.session_state.user.id,
+                                "question": "Image",
+                                "answer": resp.text
+                            }).execute()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        elif menu == "Tutor":
+            st.subheader("🎯 Socratic Tutor")
+            prob = st.text_area("Your problem:")
+            if prob and st.button("Start"):
+                try:
+                    resp = model.generate_content(f"Socratic tutor for: {prob}. Ask guiding questions only.")
+                    st.write(resp.text)
                     if supabase:
                         supabase.table("history").insert({
                             "user_id": st.session_state.user.id,
-                            "question": f"Socratic: {problem}",
-                            "answer": res.text
+                            "question": f"Tutor: {prob}",
+                            "answer": resp.text
                         }).execute()
-                        
                 except Exception as e:
                     st.error(f"Error: {e}")
-
 else:
     login_screen()

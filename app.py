@@ -21,9 +21,8 @@ def initialize_supabase():
 
 @st.cache_resource
 def initialize_gemini():
-    """Initialize Gemini AI - FIXED for stable API only"""
+    """Initialize Gemini AI - ULTIMATE FIX"""
     try:
-        # Check if API key exists
         if "GOOGLE_API_KEY" not in st.secrets:
             st.error("🚨 GOOGLE_API_KEY not found in secrets!")
             return None
@@ -31,21 +30,32 @@ def initialize_gemini():
         api_key = st.secrets["GOOGLE_API_KEY"]
         genai.configure(api_key=api_key)
         
-        # Only use STABLE models that work with standard API keys
+        # List all available models first
+        try:
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            st.info(f"Available models: {', '.join(available_models[:3])}")
+        except:
+            pass
+        
+        # Try these model names WITHOUT the "models/" prefix
         model_names = [
-            'gemini-1.5-flash',  # Most common, works for everyone
-            'gemini-1.5-pro',    # Fallback
-            'gemini-pro'         # Legacy fallback
+            'gemini-pro',           # Most compatible
+            'gemini-1.5-pro',
+            'gemini-1.5-flash',
         ]
         
         for model_name in model_names:
             try:
+                # Don't add "models/" prefix - let the library handle it
                 model = genai.GenerativeModel(model_name)
+                st.success(f"✅ Using: {model_name}")
                 return model
-            except Exception:
+            except Exception as e:
+                st.warning(f"Tried {model_name}: {str(e)[:50]}")
                 continue
         
-        st.error("🚨 Could not initialize any model. Check your API key.")
+        st.error("🚨 No compatible models found. Your API key may be invalid or expired.")
+        st.info("Get a new key at: https://aistudio.google.com/app/apikey")
         return None
         
     except Exception as e:
@@ -111,7 +121,7 @@ def login_screen():
             if st.button("🌐 Google Sign-In", use_container_width=True):
                 try:
                     supabase_url = st.secrets["supabase"]["url"]
-                    redirect_url = "http://localhost:8501"  # Change for deployment
+                    redirect_url = "http://localhost:8501"
                     
                     oauth_url = f"{supabase_url}/auth/v1/authorize?provider=google&redirect_to={redirect_url}"
                     
@@ -145,8 +155,9 @@ def login_screen():
 # --- 6. MAIN APP ---
 if st.session_state.user:
     if not model:
-        st.error("🚨 AI service unavailable. Please check your GOOGLE_API_KEY.")
-        st.info("Get your key at: https://aistudio.google.com/app/apikey")
+        st.error("🚨 AI service unavailable.")
+        st.warning("Please generate a NEW API key at: https://aistudio.google.com/app/apikey")
+        st.info("Your current key may be expired or for an older API version.")
         if st.sidebar.button("Logout"):
             st.session_state.user = None
             st.rerun()

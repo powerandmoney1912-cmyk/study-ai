@@ -488,4 +488,5 @@ def show_quiz():
                 if is_correct:
                     st.success(f"✅ Q{idx+1}: Correct!")
                 else:
-                    st.error(f"❌ Q{idx+1}: Wrong - Answe
+                 # FIXED CODE
+st.error(f"❌ Q{idx+1}: Wrong - Answer: {q['correct']}) {q['options'][q['correct']]}")

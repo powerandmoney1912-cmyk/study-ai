@@ -5,26 +5,31 @@ from datetime import datetime, timedelta
 import PIL.Image
 
 # --- 1. INITIAL SETUP ---
-st.set_page_config(page_title="Study Master Pro", layout="wide")
+st.set_page_config(page_title="Study Master Pro", layout="centered", page_icon="🎓")
 
 # Initialize Supabase
 url = st.secrets["supabase"]["url"]
 key = st.secrets["supabase"]["key"]
 supabase: Client = create_client(url, key)
 
-# Initialize Gemini
+# Initialize Gemini with Auto-Bug-Fixing Logic
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# FIX: We use a try-except block to find the brain your API allows
-try:
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    # Simple check to see if it works
-    test = model.generate_content("hi")
-except:
-    try:
-        model = genai.GenerativeModel('gemini-pro')
-    except:
-        st.error("🚨 API Key Error: Please check your Google AI Studio key.")
+@st.cache_resource
+def initialize_ai():
+    """Tries different model names to bypass the 404 bug"""
+    possible_models = ['gemini-1.5-flash', 'models/gemini-1.5-flash', 'gemini-pro']
+    for model_name in possible_models:
+        try:
+            m = genai.GenerativeModel(model_name)
+            # Test call to ensure it's not a 404
+            m.generate_content("test")
+            return m
+        except:
+            continue
+    return None
+
+model = initialize_ai()
 
 # --- 2. SESSION STATE ---
 if "user" not in st.session_state:
@@ -32,8 +37,50 @@ if "user" not in st.session_state:
 if "is_premium" not in st.session_state:
     st.session_state.is_premium = False
 
-# --- 3. LIMIT LOGIC (24HR RESET) ---
-def get_daily_chat_count():
+# --- 3. GOOGLE AUTH & AUTH UI ---
+def login_page():
+    st.title("🎓 Study Master Pro")
+    st.markdown("### Elevate your learning with AI")
+    
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
+    
+    with tab1:
+        email = st.text_input("Email", placeholder="yourname@example.com")
+        password = st.text_input("Password", type="password")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Login", use_container_width=True):
+                try:
+                    res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                    st.session_state.user = res.user
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Login failed: {e}")
+        
+        with col2:
+            # Google Sign-In Simulation (Redirects to Supabase OAuth)
+            if st.button("🌐 Sign in with Google", use_container_width=True):
+                try:
+                    # Note: Requires Google Provider enabled in Supabase Dashboard
+                    res = supabase.auth.sign_in_with_oauth({"provider": "google"})
+                    st.info("Redirecting to Google...")
+                except Exception as e:
+                    st.error("Google Sign-in not configured in Supabase.")
+
+    with tab2:
+        new_email = st.text_input("Register Email", placeholder="yourname@example.com")
+        new_pass = st.text_input("Create Password", type="password")
+        if st.button("Create Account", use_container_width=True):
+            try:
+                supabase.auth.sign_up({"email": new_email, "password": new_pass})
+                st.success("Registration successful! Please log in.")
+            except Exception as e:
+                st.error(f"Sign up failed: {e}")
+
+# --- 4. DATA LOGIC (24h Reset) ---
+def get_daily_usage():
+    """Fetches usage from Supabase within last 24h"""
     try:
         yesterday = (datetime.now() - timedelta(hours=24)).isoformat()
         res = supabase.table("history").select("id", count="exact").eq("user_id", st.session_state.user.id).gte("created_at", yesterday).execute()
@@ -41,75 +88,64 @@ def get_daily_chat_count():
     except:
         return 0
 
-# --- 4. MAIN FEATURES ---
-
-def chat_logic(mode="normal"):
-    count = get_daily_chat_count()
-    limit = 250 if st.session_state.is_premium else 50
-    st.sidebar.metric("24h Usage", f"{count} / {limit}")
-
-    if count >= limit:
-        st.error(f"Daily limit reached! ({count}/{limit}). Resets in 24h or use Premium code.")
-        return
-
-    prompt = st.chat_input("Ask a question...")
-    if prompt:
-        with st.chat_message("user"): st.write(prompt)
-        sys_prompt = "You are a Socratic Tutor. Only ask questions." if mode == "socratic" else "Helpful Study Assistant."
-        try:
-            resp = model.generate_content(f"{sys_prompt}\nUser: {prompt}")
-            with st.chat_message("assistant"): st.write(resp.text)
-            # Save to Supabase to track limit
-            supabase.table("history").insert({"user_id": st.session_state.user.id, "question": prompt, "answer": resp.text}).execute()
-        except Exception as e:
-            st.error(f"AI Error: {e}")
-
-# --- 5. UI LAYOUT ---
+# --- 5. MAIN APP INTERFACE ---
 if st.session_state.user:
-    st.sidebar.title("🎓 Study Master Pro")
+    # Sidebar Setup
+    st.sidebar.title("💎 Study Master")
     
-    # REDEMPTION ZONE (Enter code here)
+    # Redemption Zone
     if not st.session_state.is_premium:
-        with st.sidebar.expander("🔑 REDEMPTION ZONE"):
-            code = st.text_input("Enter Special Code", type="password")
-            if st.button("Unlock 250 Chats"):
+        with st.sidebar.expander("🔑 REDEEM PREMIUM"):
+            code = st.text_input("Enter Code", type="password")
+            if st.button("Activate"):
                 if code == "STUDY777":
                     st.session_state.is_premium = True
-                    st.success("Premium Unlocked!")
                     st.rerun()
                 else:
                     st.error("Invalid Code")
     else:
-        st.sidebar.success("✅ PREMIUM ACTIVE")
-    
-    menu = st.sidebar.radio("Navigation", ["Normal Chat", "Socratic Tutor", "Quiz Zone", "File Mode"])
-    
-    if menu == "Normal Chat": chat_logic("normal")
-    elif menu == "Socratic Tutor": chat_logic("socratic")
-    elif menu == "Quiz Zone":
-        st.subheader("📝 Quiz Zone")
-        topic = st.text_input("Enter Topic for Quiz")
-        if st.button("Start Quiz"):
-            st.write(model.generate_content(f"Create a 5 question quiz on {topic}").text)
-    elif menu == "File Mode":
-        st.subheader("📁 File Mode")
-        up = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"])
-        if up and st.button("Get Notes"):
-            img = PIL.Image.open(up)
-            st.write(model.generate_content(["Provide detailed study notes based on this image", img]).text)
+        st.sidebar.success("Premium Active (250 Chats)")
 
-    if st.sidebar.button("Logout"):
+    # Navigation & Usage
+    usage = get_daily_usage()
+    limit = 250 if st.session_state.is_premium else 50
+    st.sidebar.progress(min(usage/limit, 1.0))
+    st.sidebar.write(f"Usage: {usage}/{limit} (Resets in 24h)")
+    
+    menu = st.sidebar.radio("Features", ["Normal Chat", "Socratic Tutor", "Quiz Zone", "File Mode", "Schedule Fixer"])
+    
+    if st.sidebar.button("Log Out"):
         st.session_state.user = None
         st.rerun()
+
+    # Feature Logic
+    if not model:
+        st.error("🚨 AI Model could not be initialized. Please check your API Key in secrets.")
+    elif usage >= limit:
+        st.error(f"Daily limit reached! Use a Premium code to get 250 chats.")
+    else:
+        # Load the feature functions (as defined in previous steps)
+        if menu == "Normal Chat":
+            st.subheader("💬 AI Study Chat")
+            prompt = st.chat_input("How can I help you today?")
+            if prompt:
+                with st.chat_message("user"): st.write(prompt)
+                resp = model.generate_content(prompt)
+                with st.chat_message("assistant"): st.write(resp.text)
+                supabase.table("history").insert({"user_id": st.session_state.user.id, "question": prompt, "answer": resp.text}).execute()
+        
+        elif menu == "Quiz Zone":
+            st.subheader("📝 Quick Quiz")
+            topic = st.text_input("Quiz Topic")
+            if topic and st.button("Generate"):
+                st.write(model.generate_content(f"Generate 5 MCQs for {topic}").text)
+
+        elif menu == "File Mode":
+            st.subheader("📁 Notes from Files")
+            file = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
+            if file:
+                img = PIL.Image.open(file)
+                st.write(model.generate_content(["Summarize this study material", img]).text)
+
 else:
-    # Login Logic
-    st.title("Welcome to Study Master Pro")
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        try:
-            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-            st.session_state.user = res.user
-            st.rerun()
-        except:
-            st.error("Login failed. Check your email/password.")
+    login_page()

@@ -5,7 +5,7 @@ import time
 # --- 1. PAGE & STYLE CONFIG ---
 st.set_page_config(page_title="Study Master Pro", page_icon="🧠", layout="wide")
 
-# Modern Dark UI Styling
+# Modern Light UI Styling
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: white; }
@@ -22,8 +22,8 @@ if "GOOGLE_API_KEY" not in st.secrets:
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
 # Use the 2026 stable model alias
-model = genai.GenerativeModel('gemini-2.5-flash')
-
+model =  (Flash-Lite has a much higher daily limit):
+model = genai.GenerativeModel('gemini-2.5-flash-lite')
 # --- 3. PERSISTENT CHAT HISTORY (Memory) ---
 # This initializes the 'brain' of the chat
 if "chat_session" not in st.session_state:
@@ -70,3 +70,4 @@ if prompt := st.chat_input("What are we learning today?"):
                 st.error("⏳ You're moving a bit fast! Please wait 60 seconds for the free limit to reset.")
             else:
                 st.error(f"⚠️ Technical Glitch: {e}")
+

@@ -77,8 +77,8 @@ if menu == "💬 Chat":
         try:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
             
-            # Using the most stable model name for version v1beta
-            model = genai.GenerativeModel('gemini-pro_lite') 
+            # Using the most stable model name for version v1
+            model = genai.GenerativeModel('gemini-pro') 
             
             full_prompt = f"Context: {context}\n\nQuestion: {prompt}"
             response = model.generate_content(full_prompt)
@@ -89,5 +89,3 @@ if menu == "💬 Chat":
                 
         except Exception as e:
             st.error(f"AI Connection Error: {e}")
-
-

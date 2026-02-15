@@ -21,23 +21,18 @@ st.markdown("""
 # --- 2. SIDEBAR NAVIGATION ---
 with st.sidebar:
     st.title("🧠 Study Master Pro")
-    menu = st.radio("Navigation", ["💬 Chat", "📝 Quiz Mode", "📅 Study Plan", "⚙️ Settings"])
+    menu = st.radio("Navigation", ["💬 Chat", "📝 Quiz Mode", "📅 Study Plan"])
     
     st.markdown("---")
-    # Using 'on_change' to ensure it processes the code immediately
-    access_input = st.text_input("Premium Code:", type="password", key="premium_code")
-    
+    access_input = st.text_input("Premium Code:", type="password")
     is_premium = (access_input == "STUDY2026")
     
-    # ULTIMATE 404 FIX: Using the most stable model names possible
-    if is_premium:
-        current_model = 'gemini-1.5-pro' 
-        st.markdown('<div class="premium-badge">✨ PREMIUM ACTIVE</div>', unsafe_allow_html=True)
-    else:
-        current_model = 'gemini-1.5-flash'
-        st.info("Using Free Tier")
+    # 404 BUG FIX: We are using 'gemini-pro' as it is the most stable name across all API versions
+    current_model_name = "gemini-pro" 
     
-    st.markdown("---")
+    if is_premium:
+        st.markdown('<div class="premium-badge">✨ PREMIUM ACTIVE</div>', unsafe_allow_html=True)
+    
     if st.button("🗑️ Clear Chat"):
         st.session_state.messages = []
         st.rerun()
@@ -47,14 +42,12 @@ def process_pdf(file):
     reader = PdfReader(file)
     text = ""
     for page in reader.pages:
-        content = page.extract_text()
-        if content:
-            text += content
+        text += page.extract_text() or ""
             
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.split_text(text)
     
-    # Ensure this model name is also correct
+    # Using the standard embedding model
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.secrets["GOOGLE_API_KEY"])
     vector_store = FAISS.from_texts(chunks, embedding=embeddings)
     return vector_store
@@ -67,7 +60,7 @@ if menu == "💬 Chat":
     if uploaded_file and "vector_store" not in st.session_state:
         with st.spinner("Analyzing..."):
             st.session_state.vector_store = process_pdf(uploaded_file)
-        st.success("Done! Ask me anything.")
+        st.success("PDF analyzed! Ask me anything.")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -75,7 +68,7 @@ if menu == "💬 Chat":
     for m in st.session_state.messages:
         with st.chat_message(m["role"]): st.markdown(m["content"])
 
-    if prompt := st.chat_input("Type your question..."):
+    if prompt := st.chat_input("Ask a question..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
         
@@ -86,9 +79,8 @@ if menu == "💬 Chat":
 
         try:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-            # Remove 'models/' prefix if it fails - some versions need it, some don't.
-            # We will try the most common one first.
-            model = genai.GenerativeModel(current_model)
+            # FIX: Calling the model directly without the 'models/' prefix inside the string
+            model = genai.GenerativeModel(current_model_name)
             
             full_prompt = f"Context: {context}\n\nUser Question: {prompt}"
             response = model.generate_content(full_prompt)
@@ -97,7 +89,4 @@ if menu == "💬 Chat":
                 st.markdown(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
         except Exception as e:
-            st.error(f"AI Connection Error. Details: {e}")
-
-else:
-    st.info(f"Page '{menu}' is locked or under construction. Go to Chat to upload notes!")
+            st.error(f"Connect Error: {e}")

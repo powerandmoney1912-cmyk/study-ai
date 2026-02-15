@@ -11,32 +11,26 @@ st.set_page_config(page_title="Study Master Pro", page_icon="🧠", layout="wide
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: white; }
-    .footer { position: fixed; left: 0; bottom: 0; width: 100%; text-align: center; color: #6e7681; font-size: 14px; padding: 10px; background: #0e1117; }
+    .footer { position: fixed; left: 0; bottom: 0; width: 100%; text-align: center; color: #6e7681; font-size: 14px; padding: 10px; background: #0e1117; z-index: 100; }
     .premium-badge { color: #FFD700; font-weight: bold; border: 1px solid #FFD700; padding: 2px 5px; border-radius: 5px; }
     </style>
     <div class="footer">Made with ❤️ by Aarya Venkat, an average 14-year-old boy</div>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR & PREMIUM LOGIC ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
     st.title("🎓 Study Dashboard")
     access_code = st.text_input("Enter Premium Code:", type="password")
     is_premium = (access_code == "STUDY2026")
-    
-    if is_premium:
-        st.success("✨ Premium Unlocked!")
-        model_name = 'gemini-2.5-flash'
-    else:
-        st.info("Free Version Active")
-        model_name = 'gemini-2.5-flash-lite'
+    model_name = 'gemini-2.5-flash' if is_premium else 'gemini-2.5-flash-lite'
     
     st.divider()
-    # FEATURE C: PDF UPLOADER
     st.subheader("📁 Upload Notes (PDF)")
     uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
     
     if st.button("🗑️ Clear Chat"):
         st.session_state.chat_session = None
+        st.session_state.pdf_added = False
         st.rerun()
 
 # --- 3. INITIALIZE AI ---
@@ -51,22 +45,22 @@ badge = " <span class='premium-badge'>PREMIUM</span>" if is_premium else ""
 st.markdown(f"<h1>🚀 Study Master Pro{badge}</h1>", unsafe_allow_html=True)
 
 # Handle PDF Content
-if uploaded_file is not None:
+if uploaded_file is not None and "pdf_added" not in st.session_state:
     reader = PdfReader(uploaded_file)
     pdf_text = "".join([page.extract_text() for page in reader.pages])
-    st.success("PDF Content Loaded! You can now ask questions about it.")
-    # Add PDF content to history silently
-    if "pdf_added" not in st.session_state:
-        st.session_state.chat_session.send_message(f"System: The user has uploaded a document with this content: {pdf_text[:2000]}. Please use this for context.")
-        st.session_state.pdf_added = True
+    st.session_state.chat_session.send_message(f"SYSTEM: User uploaded a PDF. Content: {pdf_text[:2000]}. Use this for future context.")
+    st.session_state.pdf_added = True
+    st.success("PDF Loaded! Ask me anything about it.")
 
-# Display Chat
+# Display Chat History
 for message in st.session_state.chat_session.history:
-    role = "assistant" if message.role == "model" else "user"
-    with st.chat_message(role):
-        st.markdown(message.parts[0].text)
+    # Filter out the "System" messages so the user doesn't see background instructions
+    if not message.parts[0].text.startswith("SYSTEM:"):
+        role = "assistant" if message.role == "model" else "user"
+        with st.chat_message(role):
+            st.markdown(message.parts[0].text)
 
-# --- 5. CHAT INPUT & FEATURES A & B ---
+# --- 5. CHAT INPUT & VOICE ---
 if prompt := st.chat_input("Ask anything..."):
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -75,17 +69,23 @@ if prompt := st.chat_input("Ask anything..."):
         response = st.session_state.chat_session.send_message(prompt)
         st.markdown(response.text)
         
-        # FEATURE B: VOICE (Text-to-Speech)
-        tts = gTTS(text=response.text[:300], lang='en') # Limit to first 300 chars for speed
+        # Audio feature
+        tts = gTTS(text=response.text[:300], lang='en')
         tts.save("response.mp3")
-        audio_file = open("response.mp3", "rb")
-        audio_bytes = audio_file.read()
-        st.audio(audio_bytes, format="audio/mp3")
+        with open("response.mp3", "rb") as f:
+            st.audio(f.read(), format="audio/mp3")
 
-# FEATURE A: QUIZ MODE BUTTON
+# --- 6. QUIZ MODE (HIDDEN ANSWERS) ---
 st.divider()
 if st.button("📝 Generate Quick Quiz"):
-    with st.spinner("Creating a quiz based on our chat..."):
-        quiz_prompt = "Based on our conversation so far, generate 3 multiple choice questions to test my knowledge. Provide the answers at the end."
-        response = st.session_state.chat_session.send_message(quiz_prompt)
+    with st.spinner("Preparing your questions..."):
+        # We tell the AI NOT to show answers yet
+        quiz_instruction = (
+            "SYSTEM: Generate 3 multiple choice questions based on our chat. "
+            "IMPORTANT: Do NOT show the answers or the answer key now. "
+            "Simply state: 'I have the answers ready. Type \"answer\" when you want to see them.' "
+            "Wait for the user to type 'answer' specifically before revealing them."
+        )
+        response = st.session_state.chat_session.send_message(quiz_instruction)
+        # Display the quiz on the screen
         st.info(response.text)

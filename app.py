@@ -1,89 +1,91 @@
 import streamlit as st
 import google.generativeai as genai
-import time
+from PyPDF2 import PdfReader
+from gtts import gTTS
+import os
+import base64
 
-# --- 1. PAGE & STYLE CONFIG ---
+# --- 1. CONFIG & STYLE ---
 st.set_page_config(page_title="Study Master Pro", page_icon="🧠", layout="wide")
 
-# Custom CSS for Dark Theme and Footer
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: white; }
-    .stChatMessage { border-radius: 15px; padding: 10px; margin-bottom: 5px; border: 1px solid #30363d; }
-    .premium-badge { color: #FFD700; font-weight: bold; border: 1px solid #FFD700; padding: 5px; border-radius: 5px; }
-    
-    /* Custom Footer Style */
-    .footer {
-        position: fixed;
-        left: 0;
-        bottom: 0;
-        width: 100%;
-        background-color: #0e1117;
-        color: #6e7681;
-        text-align: center;
-        padding: 10px;
-        font-size: 14px;
-        border-top: 1px solid #30363d;
-    }
+    .footer { position: fixed; left: 0; bottom: 0; width: 100%; text-align: center; color: #6e7681; font-size: 14px; padding: 10px; background: #0e1117; }
+    .premium-badge { color: #FFD700; font-weight: bold; border: 1px solid #FFD700; padding: 2px 5px; border-radius: 5px; }
     </style>
-    <div class="footer">
-        Made with ❤️ by Aarya Venkat, an average 14-year-old boy
-    </div>
+    <div class="footer">Made with ❤️ by Aarya Venkat, an average 14-year-old boy</div>
 """, unsafe_allow_html=True)
 
-# --- 2. PREMIUM & SIDEBAR ---
+# --- 2. SIDEBAR & PREMIUM LOGIC ---
 with st.sidebar:
     st.title("🎓 Study Dashboard")
     access_code = st.text_input("Enter Premium Code:", type="password")
+    is_premium = (access_code == "STUDY2026")
     
-    if access_code == "AARYATHEKING":
-        is_premium = True
+    if is_premium:
         st.success("✨ Premium Unlocked!")
-        selected_model = 'gemini-2.5-flash'  # Smarter Model
+        model_name = 'gemini-2.5-flash'
     else:
-        is_premium = False
-        selected_model = 'gemini-2.5-flash-lite' # High Quota Model
+        st.info("Free Version Active")
+        model_name = 'gemini-2.5-flash-lite'
     
     st.divider()
-    st.caption("Developed by Aarya Venkat")
-    if st.button("🗑️ Clear History"):
+    # FEATURE C: PDF UPLOADER
+    st.subheader("📁 Upload Notes (PDF)")
+    uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
+    
+    if st.button("🗑️ Clear Chat"):
         st.session_state.chat_session = None
         st.rerun()
 
-# --- 3. API INITIALIZATION ---
-if "GOOGLE_API_KEY" not in st.secrets:
-    st.error("❌ API Key missing in Secrets!")
-    st.stop()
-
+# --- 3. INITIALIZE AI ---
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-model = genai.GenerativeModel(selected_model)
+model = genai.GenerativeModel(model_name)
 
 if "chat_session" not in st.session_state or st.session_state.chat_session is None:
     st.session_state.chat_session = model.start_chat(history=[])
 
-# --- 4. MAIN INTERFACE ---
-title_suffix = " <span class='premium-badge'>PREMIUM</span>" if is_premium else ""
-st.markdown(f"<h1>🚀 Study Master Pro{title_suffix}</h1>", unsafe_allow_html=True)
-st.caption(f"Running on: {selected_model}")
+# --- 4. MAIN UI ---
+badge = " <span class='premium-badge'>PREMIUM</span>" if is_premium else ""
+st.markdown(f"<h1>🚀 Study Master Pro{badge}</h1>", unsafe_allow_html=True)
 
-# Display history
+# Handle PDF Content
+if uploaded_file is not None:
+    reader = PdfReader(uploaded_file)
+    pdf_text = "".join([page.extract_text() for page in reader.pages])
+    st.success("PDF Content Loaded! You can now ask questions about it.")
+    # Add PDF content to history silently
+    if "pdf_added" not in st.session_state:
+        st.session_state.chat_session.send_message(f"System: The user has uploaded a document with this content: {pdf_text[:2000]}. Please use this for context.")
+        st.session_state.pdf_added = True
+
+# Display Chat
 for message in st.session_state.chat_session.history:
     role = "assistant" if message.role == "model" else "user"
     with st.chat_message(role):
         st.markdown(message.parts[0].text)
 
-# --- 5. CHAT INPUT ---
-if prompt := st.chat_input("What are we learning today?"):
+# --- 5. CHAT INPUT & FEATURES A & B ---
+if prompt := st.chat_input("Ask anything..."):
     with st.chat_message("user"):
         st.markdown(prompt)
     
     with st.chat_message("assistant"):
-        try:
-            response = st.session_state.chat_session.send_message(prompt)
-            st.markdown(response.text)
-        except Exception as e:
-            if "429" in str(e):
-                st.error("⏳ Limit reached! Try the Premium code or wait a few minutes.")
-            else:
-                st.error(f"⚠️ Error: {e}")
+        response = st.session_state.chat_session.send_message(prompt)
+        st.markdown(response.text)
+        
+        # FEATURE B: VOICE (Text-to-Speech)
+        tts = gTTS(text=response.text[:300], lang='en') # Limit to first 300 chars for speed
+        tts.save("response.mp3")
+        audio_file = open("response.mp3", "rb")
+        audio_bytes = audio_file.read()
+        st.audio(audio_bytes, format="audio/mp3")
 
+# FEATURE A: QUIZ MODE BUTTON
+st.divider()
+if st.button("📝 Generate Quick Quiz"):
+    with st.spinner("Creating a quiz based on our chat..."):
+        quiz_prompt = "Based on our conversation so far, generate 3 multiple choice questions to test my knowledge. Provide the answers at the end."
+        response = st.session_state.chat_session.send_message(quiz_prompt)
+        st.info(response.text)

@@ -21,7 +21,7 @@ def initialize_supabase():
 
 @st.cache_resource
 def initialize_gemini():
-    """Initialize Gemini AI - FIXED 404 ERROR"""
+    """Initialize Gemini AI - FIXED for stable API only"""
     try:
         # Check if API key exists
         if "GOOGLE_API_KEY" not in st.secrets:
@@ -31,24 +31,21 @@ def initialize_gemini():
         api_key = st.secrets["GOOGLE_API_KEY"]
         genai.configure(api_key=api_key)
         
-        # Try CORRECT model names in order of preference
+        # Only use STABLE models that work with standard API keys
         model_names = [
-            'gemini-2.0-flash-exp',  # Latest experimental
-            'gemini-1.5-flash-latest',  # Latest stable flash
-            'gemini-1.5-pro-latest',  # Latest stable pro
-            'gemini-1.5-flash',  # Specific version
-            'gemini-pro'  # Fallback
+            'gemini-1.5-flash',  # Most common, works for everyone
+            'gemini-1.5-pro',    # Fallback
+            'gemini-pro'         # Legacy fallback
         ]
         
         for model_name in model_names:
             try:
                 model = genai.GenerativeModel(model_name)
-                st.success(f"✅ Connected to: {model_name}")
                 return model
-            except Exception as e:
+            except Exception:
                 continue
         
-        st.error("🚨 All model attempts failed. Check your API key at https://makersuite.google.com/app/apikey")
+        st.error("🚨 Could not initialize any model. Check your API key.")
         return None
         
     except Exception as e:
@@ -76,7 +73,7 @@ def get_daily_usage():
             "user_id", st.session_state.user.id
         ).gte("created_at", time_threshold).execute()
         return res.count if res.count else 0
-    except Exception as e:
+    except Exception:
         return 0
 
 # --- 5. LOGIN SCREEN ---
@@ -114,14 +111,12 @@ def login_screen():
             if st.button("🌐 Google Sign-In", use_container_width=True):
                 try:
                     supabase_url = st.secrets["supabase"]["url"]
-                    # For local: http://localhost:8501
-                    # For deployed: https://your-app.streamlit.app
-                    redirect_url = "http://localhost:8501"
+                    redirect_url = "http://localhost:8501"  # Change for deployment
                     
                     oauth_url = f"{supabase_url}/auth/v1/authorize?provider=google&redirect_to={redirect_url}"
                     
-                    st.markdown(f'[🔗 Click here to sign in with Google]({oauth_url})')
-                    st.info("Ensure Google OAuth is enabled in Supabase Dashboard → Auth → Providers")
+                    st.markdown(f'[🔗 Click to sign in with Google]({oauth_url})')
+                    st.info("Enable Google OAuth in Supabase Dashboard → Auth → Providers")
                 except Exception as e:
                     st.error(f"Google auth error: {e}")
 
@@ -151,7 +146,7 @@ def login_screen():
 if st.session_state.user:
     if not model:
         st.error("🚨 AI service unavailable. Please check your GOOGLE_API_KEY.")
-        st.info("Get your key at: https://makersuite.google.com/app/apikey")
+        st.info("Get your key at: https://aistudio.google.com/app/apikey")
         if st.sidebar.button("Logout"):
             st.session_state.user = None
             st.rerun()

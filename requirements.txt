@@ -5,5 +5,6 @@ gTTS
 langchain
 langchain-community
 langchain-google-genai
-langchain-text-splitters
+RecursiveCharacterTextSplitter
 faiss-cpu
+

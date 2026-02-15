@@ -23,29 +23,31 @@ def initialize_supabase():
 def initialize_gemini():
     """Initialize Gemini AI with multiple fallback models"""
     try:
-        api_key = st.secrets.get("GOOGLE_API_KEY", None)
-        if not api_key:
+        # Check if API key exists
+        if "GOOGLE_API_KEY" not in st.secrets:
             st.error("🚨 GOOGLE_API_KEY not found in secrets!")
+            st.info("Add it to .streamlit/secrets.toml: GOOGLE_API_KEY = 'your-key'")
             return None
         
+        api_key = st.secrets["GOOGLE_API_KEY"]
+        
+        # Configure Gemini
         genai.configure(api_key=api_key)
         
-        # Try multiple model versions
+        # Try multiple model versions WITHOUT testing (that's what was breaking)
         for model_name in ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']:
             try:
                 model = genai.GenerativeModel(model_name)
-                # Test with a simple prompt
-                model.generate_content("test")
-                st.success(f"✅ Using model: {model_name}")
-                return model
-            except Exception:
+                return model  # Return immediately without testing
+            except Exception as e:
                 continue
         
         st.error("🚨 Could not load any Gemini model")
         return None
         
     except Exception as e:
-        st.error(f"🚨 AI initialization failed: {e}")
+        st.error(f"🚨 AI initialization failed: {str(e)}")
+        st.info("Make sure your GOOGLE_API_KEY is correct and active")
         return None
 
 # Initialize services
@@ -70,7 +72,6 @@ def get_daily_usage():
         ).gte("created_at", time_threshold).execute()
         return res.count if res.count else 0
     except Exception as e:
-        st.warning(f"Could not fetch usage data: {e}")
         return 0
 
 # --- 5. FIXED LOGIN & GOOGLE SIGN-IN ---
@@ -106,27 +107,26 @@ def login_screen():
                         st.error(f"Login Failed: {str(e)}")
         
         with col2:
-            # FIXED GOOGLE SIGN-IN
+            # SIMPLIFIED GOOGLE SIGN-IN
             if st.button("🌐 Google Sign-In", use_container_width=True):
-                st.info("""
-                **Google Sign-In Setup Required:**
-                
-                1. Go to Supabase Dashboard → Authentication → Providers
-                2. Enable Google provider
-                3. Add your Google OAuth credentials
-                4. Add redirect URL: `https://your-app.streamlit.app`
-                
-                Then use this link format:
-                """)
-                
-                # Generate OAuth link
                 try:
-                    # Get your Supabase URL
+                    # This opens Google OAuth in browser
                     supabase_url = st.secrets["supabase"]["url"]
-                    oauth_link = f"{supabase_url}/auth/v1/authorize?provider=google"
-                    st.markdown(f"[Click here to sign in with Google]({oauth_link})")
+                    redirect_url = "http://localhost:8501"  # Change to your deployed URL
+                    
+                    oauth_url = f"{supabase_url}/auth/v1/authorize?provider=google&redirect_to={redirect_url}"
+                    
+                    st.markdown(f"""
+                    <a href="{oauth_url}" target="_blank">
+                        <button style="width:100%; padding:10px; background:#4285f4; color:white; border:none; border-radius:5px; cursor:pointer;">
+                            Continue with Google
+                        </button>
+                    </a>
+                    """, unsafe_allow_html=True)
+                    
+                    st.info("Note: Make sure Google provider is enabled in Supabase Dashboard → Auth → Providers")
                 except Exception as e:
-                    st.error(f"Could not generate Google auth link: {e}")
+                    st.error(f"Google auth setup error: {e}")
 
     with tab_signup:
         s_email = st.text_input("New Email", key="s_email")

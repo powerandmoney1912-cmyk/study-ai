@@ -13,8 +13,11 @@ supabase: Client = create_client(url, key)
 
 # Initialize Gemini
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-# FIX: Using the full model path to avoid 404 errors
-model = genai.GenerativeModel('models/gemini-1.5-flash')
+
+# FIX: Using 'gemini-1.5-flash' without prefixes often resolves 404 version errors
+# If this fails, change it to 'models/gemini-1.5-flash'
+MODEL_NAME = 'gemini-1.5-flash'
+model = genai.GenerativeModel(MODEL_NAME)
 
 # --- SESSION STATE ---
 if "user" not in st.session_state:
@@ -22,7 +25,7 @@ if "user" not in st.session_state:
 
 # --- AUTHENTICATION ---
 def login_ui():
-    st.title("🎓 Study Master Pro: Premium")
+    st.title("🎓 Study Master Pro: Premium Edition")
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
     
     with tab1:
@@ -34,84 +37,97 @@ def login_ui():
                 st.session_state.user = res.user
                 st.rerun()
             except Exception as e:
-                st.error(f"Login failed: {e}")
+                st.error(f"Login failed: Your account exists but authentication failed. {e}")
 
     with tab2:
+        st.info("If you get a 'duplicate key' error, it means you are already signed up! Just click the Login tab.")
         email = st.text_input("Email", key="reg_email")
         password = st.text_input("Password", type="password", key="reg_pass")
         if st.button("Create Premium Account"):
             try:
                 supabase.auth.sign_up({"email": email, "password": password})
-                st.success("Account created! You can now Login.")
+                st.success("Success! Now go to the 'Login' tab to enter.")
             except Exception as e:
                 st.error(f"Sign up failed: {e}")
 
 # --- APP FEATURES ---
-def socratic_tutor():
-    st.subheader("🧘 Socratic Tutor")
-    st.info("I won't give you answers. I will ask questions to help you find them yourself.")
-    
-    # Persistent History for Socratic Tutor
-    if "socratic_history" not in st.session_state:
-        st.session_state.socratic_history = []
 
-    for msg in st.session_state.socratic_history:
+def chat_interface(mode="normal"):
+    """Combined Normal Chat and Socratic Tutor"""
+    if mode == "socratic":
+        st.subheader("🧘 Socratic Tutor")
+        st.caption("I help you find answers by asking the right questions.")
+        sys_prompt = "You are a Socratic Tutor. Never give a direct answer. Respond only with questions that guide the student."
+    else:
+        st.subheader("💬 Normal AI Chat")
+        st.caption("Standard AI assistant for quick help and explanations.")
+        sys_prompt = "You are a helpful, direct AI study assistant."
+
+    if f"chat_history_{mode}" not in st.session_state:
+        st.session_state[f"chat_history_{mode}"] = []
+
+    for msg in st.session_state[f"chat_history_{mode}"]:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-    if prompt := st.chat_input("What are you struggling with?"):
-        st.session_state.socratic_history.append({"role": "user", "content": prompt})
+    if prompt := st.chat_input("How can I help you study?"):
+        st.session_state[f"chat_history_{mode}"].append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.write(prompt)
         
-        system_prompt = "You are a Socratic Tutor. Never give direct answers. Only ask guiding questions to lead the student to the answer."
-        response = model.generate_content(f"{system_prompt}\nStudent: {prompt}")
-        
-        st.session_state.socratic_history.append({"role": "assistant", "content": response.text})
-        with st.chat_message("assistant"): st.write(response.text)
-        
-        # Save to Supabase History
-        supabase.table("history").insert({
-            "user_id": st.session_state.user.id,
-            "question": prompt,
-            "answer": response.text
-        }).execute()
+        try:
+            full_prompt = f"{sys_prompt}\nUser: {prompt}"
+            response = model.generate_content(full_prompt)
+            
+            st.session_state[f"chat_history_{mode}"].append({"role": "assistant", "content": response.text})
+            with st.chat_message("assistant"): st.write(response.text)
+            
+            # Save to Supabase
+            supabase.table("history").insert({
+                "user_id": st.session_state.user.id,
+                "question": prompt,
+                "answer": response.text
+            }).execute()
+        except Exception as e:
+            st.error(f"AI Error: {e}")
 
 def schedule_fixer():
     st.subheader("📅 Reading Schedule Fixer")
     col1, col2 = st.columns(2)
     with col1:
-        book = st.text_input("What are you reading?")
-        pages = st.number_input("Total Pages", min_value=1)
+        book = st.text_input("Topic or Book Name")
+        pages = st.number_input("Total Pages/Chapters", min_value=1)
     with col2:
-        days = st.number_input("Days to finish", min_value=1)
-        difficulty = st.select_slider("Content Difficulty", options=["Easy", "Medium", "Hard"])
+        days = st.number_input("Days available", min_value=1)
+        intensity = st.select_slider("Study Intensity", options=["Light", "Moderate", "Exam Prep"])
 
-    if st.button("Generate My Schedule"):
-        prompt = f"Create a daily reading schedule for a {difficulty} book called '{book}' with {pages} pages to be finished in {days} days. Break it down day by day."
-        response = model.generate_content(prompt)
-        st.write(response.text)
+    if st.button("Generate Schedule"):
+        with st.spinner("Calculating..."):
+            prompt = f"Create a daily study/reading schedule for {book}. Total volume: {pages} units. Time: {days} days. Intensity: {intensity}."
+            response = model.generate_content(prompt)
+            st.write(response.text)
 
 def quiz_generator():
-    st.subheader("📝 Premium Quiz Generator")
-    topic = st.text_input("Quiz Topic")
-    num_q = st.slider("Number of Questions", 1, 10, 5)
+    st.subheader("📝 Premium Quiz Builder")
+    topic = st.text_input("What is the quiz about?")
+    q_count = st.slider("Questions", 3, 10, 5)
     
-    if st.button("Generate Quiz"):
-        prompt = f"Generate a {num_q} question multiple choice quiz about {topic}. Provide the questions first, then the answer key at the very bottom."
+    if st.button("Build Quiz"):
+        prompt = f"Create a {q_count} question multiple choice quiz on {topic}. Provide answers at the end."
         response = model.generate_content(prompt)
         st.markdown(response.text)
 
 # --- MAIN NAVIGATION ---
 if st.session_state.user:
-    st.sidebar.title(f"Welcome!")
-    menu = st.sidebar.radio("Go to:", ["Socratic Tutor", "Schedule Fixer", "Quiz Generator"])
+    st.sidebar.title("Premium Navigation")
+    menu = st.sidebar.radio("Features:", ["Normal Chat", "Socratic Tutor", "Schedule Fixer", "Quiz Builder"])
     
     if st.sidebar.button("Logout"):
         st.session_state.user = None
         st.rerun()
 
-    if menu == "Socratic Tutor": socratic_tutor()
+    if menu == "Normal Chat": chat_interface(mode="normal")
+    elif menu == "Socratic Tutor": chat_interface(mode="socratic")
     elif menu == "Schedule Fixer": schedule_fixer()
-    elif menu == "Quiz Generator": quiz_generator()
+    elif menu == "Quiz Builder": quiz_generator()
 else:
     login_ui()

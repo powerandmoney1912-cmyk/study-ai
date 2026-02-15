@@ -7,7 +7,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # --- 0. GOOGLE VERIFICATION ---
 # This hidden tag tells Google you own the site.
-st.markdown('<meta name="google-site-verification" content="PASTE_YOUR_CODE_HERE" />', unsafe_allow_html=True)
+st.markdown('<meta name="google-site-verification" content="ThWp6_7rt4Q973HycJ07l-jYZ0o55s8f0Em28jBBNoU" />', unsafe_allow_html=True)
 
 # --- 1. SETUP ---
 st.set_page_config(page_title="Study Master Pro", layout="wide")
@@ -110,3 +110,4 @@ elif menu == "📅 Study Plan":
     if st.button("Create Plan"):
         plan = call_ai(f"Create a {days}-day study plan for {topic}. Be specific.")
         st.markdown(plan)
+

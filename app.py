@@ -13,27 +13,27 @@ supabase: Client = create_client(url, key)
 # Initialize Gemini
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# 404 BUG FIX: Using the absolute model path prevents the 'not found' error
+# BUG FIX: Using the full model path prevents the 404 'not found' error
 MODEL_NAME = 'models/gemini-1.5-flash'
 model = genai.GenerativeModel(MODEL_NAME)
 
 # --- 2. SESSION STATE ---
 if "user" not in st.session_state:
     st.session_state.user = None
-# This ensures every new session starts as FREE
+# Ensures everyone starts as FREE until they enter the code
 if "is_premium" not in st.session_state:
     st.session_state.is_premium = False
 
 # --- 3. DATABASE HELPER ---
 def get_chat_count():
-    """Counts messages in your Supabase 'history' table"""
+    """Counts total messages for the user in Supabase history"""
     try:
         res = supabase.table("history").select("id", count="exact").eq("user_id", st.session_state.user.id).execute()
         return res.count if res.count else 0
     except:
         return 0
 
-# --- 4. AUTHENTICATION ---
+# --- 4. AUTHENTICATION UI ---
 def login_ui():
     st.title("🎓 Study Master Pro")
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
@@ -60,50 +60,51 @@ def login_ui():
 
 # --- 5. MAIN APP INTERFACE ---
 if st.session_state.user:
-    # --- SIDEBAR REDEMPTION & STATS ---
-    st.sidebar.title("💎 Account Status")
+    # --- REDEMPTION ZONE ---
+    st.sidebar.title("💎 Redemption Zone")
     
-    # Redemption Box: Only shows if NOT premium
     if not st.session_state.is_premium:
-        with st.sidebar.expander("🔑 REDEEM PREMIUM CODE"):
-            redeem_code = st.text_input("Enter Code", type="password")
-            if st.button("Activate 250 Chats"):
-                if redeem_code == "STUDY777":
+        with st.sidebar.expander("🔑 ENTER SPECIAL CODE"):
+            code = st.text_input("Special Code", type="password")
+            if st.button("Unlock Premium (250 Chats)"):
+                if code == "STUDY777":
                     st.session_state.is_premium = True
-                    st.success("Premium Unlocked!")
+                    st.success("Premium Activated!")
                     st.rerun()
                 else:
                     st.error("Invalid Code")
     else:
-        st.sidebar.success("✅ PREMIUM ACTIVE")
+        st.sidebar.success("✅ PREMIUM STATUS ACTIVE")
 
     # Chat Limit Display
     chats_used = get_chat_count()
     max_chats = 250 if st.session_state.is_premium else 10
-    st.sidebar.metric("Chats Used", f"{chats_used} / {max_chats}")
+    st.sidebar.metric("Usage Tracker", f"{chats_used} / {max_chats} Chats")
     
+    st.sidebar.divider()
     menu = st.sidebar.radio("Navigation", ["Normal Chat", "Socratic Tutor", "Schedule Fixer"])
+    
     if st.sidebar.button("Logout"):
         st.session_state.user = None
         st.session_state.is_premium = False
         st.rerun()
 
-    # --- CHAT & FEATURE LOGIC ---
+    # --- FEATURE LOGIC ---
     if chats_used >= max_chats:
-        st.error(f"Limit reached ({chats_used}/{max_chats}). Use a Premium code to get 250 chats!")
+        st.error(f"Limit reached ({chats_used}/{max_chats}). Enter a code in the Redemption Zone to get 250 chats!")
     else:
         if menu == "Normal Chat":
             st.subheader("💬 Normal Chat")
-            prompt = st.chat_input("Ask me anything...")
+            prompt = st.chat_input("Ask a question...")
             if prompt:
                 with st.chat_message("user"): st.write(prompt)
                 try:
                     resp = model.generate_content(prompt)
                     with st.chat_message("assistant"): st.write(resp.text)
-                    # Save to Supabase to track limit
+                    # Track limit in Supabase
                     supabase.table("history").insert({"user_id": st.session_state.user.id, "question": prompt, "answer": resp.text}).execute()
                 except Exception as e:
-                    st.error(f"404 Bug Fix Triggered: {e}")
+                    st.error(f"AI Connection Error: {e}")
 
         elif menu == "Socratic Tutor":
             st.subheader("🧘 Socratic Tutor")
@@ -118,7 +119,7 @@ if st.session_state.user:
 
         elif menu == "Schedule Fixer":
             st.subheader("📅 Schedule Fixer")
-            book = st.text_input("What are you reading?")
+            book = st.text_input("What topic or book?")
             days = st.number_input("Days", min_value=1)
             if st.button("Generate Plan"):
                 resp = model.generate_content(f"Create a {days} day study plan for {book}")

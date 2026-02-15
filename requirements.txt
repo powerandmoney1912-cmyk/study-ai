@@ -1,6 +1,7 @@
 streamlit
 google-generativeai
-firebase-admin
+supabase
 PyPDF2
 Pillow
 requests
+

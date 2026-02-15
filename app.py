@@ -9,7 +9,6 @@ import os
 # --- 1. SETTINGS & BRANDING ---
 st.set_page_config(page_title="Study Master Pro", layout="wide")
 
-# Custom Professional Styling
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: white; }
@@ -22,69 +21,55 @@ st.markdown("""
 # --- 2. SIDEBAR NAVIGATION ---
 with st.sidebar:
     st.title("🧠 Study Master Pro")
-    st.markdown("---")
     menu = st.radio("Navigation", ["💬 Chat", "📝 Quiz Mode", "📅 Study Plan", "⚙️ Settings"])
+    
     st.markdown("---")
+    # This input will now trigger an update as soon as you press Enter
+    access_input = st.text_input("Premium Code:", type="password", help="Type code and press Enter")
     
-    # FIX: Premium Access Logic with Auto-Submit
-    access_input = st.text_input("Enter Premium Code & Press Enter:", type="password", key="premium_key")
-    
-    # Check the code
     is_premium = (access_input == "STUDY2026")
     
-    # FIX: Use a model name that is confirmed to exist in the 2026 API
-    model_choice = 'gemini-1.5-flash' # Usually works, but if 404 persists, we use 'gemini-pro'
+    # FIX: Updated model name to avoid the 404 error
+    current_model = 'gemini-2.0-flash' if is_premium else 'gemini-1.5-flash-8b'
     
     if is_premium:
         st.markdown('<div class="premium-badge">✨ PREMIUM ACTIVE</div>', unsafe_allow_html=True)
-    else:
-        st.info("Using Free Tier (Flash-Lite)")
     
-    st.markdown("---")
-    if st.button("🗑️ Clear Conversation"):
+    if st.button("🗑️ Clear Chat"):
         st.session_state.messages = []
-        if "vector_store" in st.session_state:
-            del st.session_state.vector_store
         st.rerun()
 
-# --- 3. THE RAG ENGINE ---
+# --- 3. RAG ENGINE ---
 def process_pdf(file):
     reader = PdfReader(file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() or ""
-    
+    text = "".join([page.extract_text() or "" for page in reader.pages])
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.split_text(text)
     
+    # We use the standard embedding model
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.secrets["GOOGLE_API_KEY"])
     vector_store = FAISS.from_texts(chunks, embedding=embeddings)
     return vector_store
 
-# --- 4. PAGE LOGIC ---
-
+# --- 4. CHAT PAGE ---
 if menu == "💬 Chat":
     st.header("Chat with your Notes")
     
-    uploaded_file = st.file_uploader("Upload your study PDF", type="pdf")
-    
-    if uploaded_file:
-        if "vector_store" not in st.session_state:
-            with st.spinner("Analyzing document..."):
-                st.session_state.vector_store = process_pdf(uploaded_file)
-            st.success("PDF Ready!")
+    uploaded_file = st.file_uploader("Upload Study PDF", type="pdf")
+    if uploaded_file and "vector_store" not in st.session_state:
+        with st.spinner("Analyzing..."):
+            st.session_state.vector_store = process_pdf(uploaded_file)
+        st.success("Done! Ask me anything.")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
     for m in st.session_state.messages:
-        with st.chat_message(m["role"]):
-            st.markdown(m["content"])
+        with st.chat_message(m["role"]): st.markdown(m["content"])
 
-    if prompt := st.chat_input("Ask me anything..."):
+    if prompt := st.chat_input("Type your question here..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with st.chat_message("user"): st.markdown(prompt)
         
         context = ""
         if "vector_store" in st.session_state:
@@ -93,26 +78,16 @@ if menu == "💬 Chat":
 
         try:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-            # Using the most stable model name to avoid 404
-            model = genai.GenerativeModel('gemini-1.5-flash') 
+            model = genai.GenerativeModel(current_model)
             
-            full_prompt = f"Context: {context}\n\nQuestion: {prompt}"
+            full_prompt = f"Use this context to answer: {context}\n\nQuestion: {prompt}"
             response = model.generate_content(full_prompt)
             
             with st.chat_message("assistant"):
                 st.markdown(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
         except Exception as e:
-            st.error(f"AI Error: {e}. Try checking your API key or model name.")
+            st.error(f"Error: {e}. If you see 404, the model name might be restricted.")
 
-elif menu == "📝 Quiz Mode":
-    st.header("🎯 Active Recall Quiz")
-    st.info("Upload a PDF in the Chat section first to generate custom questions!")
-
-elif menu == "📅 Study Plan":
-    st.header("Daily Micro-Task Generator")
-    st.write("Feature coming in v3.1")
-
-elif menu == "⚙️ Settings":
-    st.header("App Settings")
-    st.write("Dark Mode is active by default.")
+else:
+    st.info(f"Page '{menu}' is ready for content! Upload a PDF in Chat first.")

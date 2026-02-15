@@ -29,7 +29,7 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 # Configure Gemini API
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
 # Initialize session state
 if 'user' not in st.session_state:
@@ -636,3 +636,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -1,62 +1,58 @@
 import streamlit as st
 import google.generativeai as genai
 
-# --- 1. COOL UI CONFIG ---
-st.set_page_config(page_title="Study Master Pro", page_icon="🧠", layout="wide")
+# --- 1. MODERN UI SETUP ---
+st.set_page_config(page_title="Study Master Pro", page_icon="🧠", layout="centered")
 
-# Custom CSS for that "Pro" look
+# Custom CSS to make the home page look cool
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: white; }
-    .stChatMessage { border-radius: 20px; padding: 15px; margin-bottom: 10px; }
+    .stChatMessage { border-radius: 20px; border: 1px solid #30363d; margin-bottom: 15px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. API & MEMORY SETUP ---
-if "GOOGLE_API_KEY" not in st.secrets:
-    st.error("Missing API Key!")
+# --- 2. SECURE API CONNECTION ---
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    # Using the 2026 stable alias
+    model = genai.GenerativeModel('gemini-2.5-flash')
+else:
+    st.error("Missing API Key in Secrets!")
     st.stop()
 
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-model = genai.GenerativeModel('gemini-2.5-flash')
+# --- 3. CHAT HISTORY (The "Memory") ---
+# We initialize a session that stays active until the page is closed
+if "chat_session" not in st.session_state:
+    st.session_state.chat_session = model.start_chat(history=[])
 
-# This is the "Chat History" brain
-if "chat_history" not in st.session_state:
-    # Starting a session that saves history automatically
-    st.session_state.chat_history = model.start_chat(history=[])
-
-# --- 3. SIDEBAR (NEW FEATURES) ---
-with st.sidebar:
-    st.title("🎓 Study Dashboard")
-    st.divider()
-    st.info("I remember our conversation. You can ask follow-up questions!")
-    
-    # Feature: Clear Chat button
-    if st.button("🗑️ Reset Conversation"):
-        st.session_state.chat_history = model.start_chat(history=[])
-        st.rerun()
-
-# --- 4. MAIN INTERFACE ---
+# --- 4. COOL HOME PAGE HEADER ---
 st.title("🚀 Study Master Pro")
-st.caption("Advanced Academic Assistant with Persistent Memory")
+st.info("I now have 'Persistent Memory.' You can ask me follow-up questions!")
 
-# Display the history on every refresh
-for message in st.session_state.chat_history.history:
-    # Google uses "model", Streamlit uses "assistant"
+# --- 5. DISPLAY HISTORY ---
+# This loop ensures your old messages stay on the screen after you type
+for message in st.session_state.chat_session.history:
     role = "assistant" if message.role == "model" else "user"
     with st.chat_message(role):
         st.markdown(message.parts[0].text)
 
-# --- 5. CHAT INPUT ---
+# --- 6. CHAT INPUT & INTERACTION ---
 if prompt := st.chat_input("What are we studying today?"):
-    # Display user message instantly
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # Get response using the SESSION (not just the model)
     with st.chat_message("assistant"):
         try:
-            response = st.session_state.chat_history.send_message(prompt)
+            # We send messages through the 'session' so it remembers context
+            response = st.session_state.chat_session.send_message(prompt)
             st.markdown(response.text)
         except Exception as e:
             st.error(f"Error: {e}")
+
+# --- 7. SIDEBAR FEATURES ---
+with st.sidebar:
+    st.title("🎓 Dashboard")
+    if st.button("🗑️ Clear Conversation"):
+        st.session_state.chat_session = model.start_chat(history=[])
+        st.rerun()

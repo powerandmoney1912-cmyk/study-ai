@@ -24,11 +24,8 @@ with st.sidebar:
     menu = st.radio("Navigation", ["💬 Chat", "📝 Quiz Mode", "📅 Study Plan"])
     
     st.markdown("---")
-    access_input = st.text_input("Premium Code:", type="password")
+    access_input = st.text_input("Premium Code:", type="password", key="p_code")
     is_premium = (access_input == "STUDY2026")
-    
-    # 404 BUG FIX: We are using 'gemini-pro' as it is the most stable name across all API versions
-    current_model_name = "gemini-pro" 
     
     if is_premium:
         st.markdown('<div class="premium-badge">✨ PREMIUM ACTIVE</div>', unsafe_allow_html=True)
@@ -47,7 +44,7 @@ def process_pdf(file):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.split_text(text)
     
-    # Using the standard embedding model
+    # We use a very standard embedding model name
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=st.secrets["GOOGLE_API_KEY"])
     vector_store = FAISS.from_texts(chunks, embedding=embeddings)
     return vector_store
@@ -60,7 +57,7 @@ if menu == "💬 Chat":
     if uploaded_file and "vector_store" not in st.session_state:
         with st.spinner("Analyzing..."):
             st.session_state.vector_store = process_pdf(uploaded_file)
-        st.success("PDF analyzed! Ask me anything.")
+        st.success("PDF analyzed!")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -77,16 +74,29 @@ if menu == "💬 Chat":
             docs = st.session_state.vector_store.similarity_search(prompt, k=3)
             context = "\n".join([d.page_content for d in docs])
 
+        # --- AUTO-FALLBACK AI LOGIC ---
         try:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-            # FIX: Calling the model directly without the 'models/' prefix inside the string
-            model = genai.GenerativeModel(current_model_name)
             
-            full_prompt = f"Context: {context}\n\nUser Question: {prompt}"
-            response = model.generate_content(full_prompt)
+            # List of models to try in order of preference
+            models_to_try = ["gemini-1.5-flash", "gemini-pro", "models/gemini-1.5-flash"]
             
-            with st.chat_message("assistant"):
-                st.markdown(response.text)
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
+            response = None
+            for model_name in models_to_try:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    full_prompt = f"Context: {context}\n\nQuestion: {prompt}"
+                    response = model.generate_content(full_prompt)
+                    if response: break 
+                except:
+                    continue
+            
+            if response:
+                with st.chat_message("assistant"):
+                    st.markdown(response.text)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+            else:
+                st.error("Could not connect to any Gemini models. Please check your API key permissions.")
+                
         except Exception as e:
-            st.error(f"Connect Error: {e}")
+            st.error(f"System Error: {e}")

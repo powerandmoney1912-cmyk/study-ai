@@ -205,6 +205,8 @@ if "current_response" not in st.session_state:
     st.session_state.current_response = ""
 if "quiz_generated" not in st.session_state:
     st.session_state.quiz_generated = False
+if "pending_message" not in st.session_state:
+    st.session_state.pending_message = None
 
 # --- 5. USAGE TRACKER ---
 def get_daily_usage():
@@ -476,7 +478,7 @@ if st.session_state.user:
         st.info("💎 Upgrade to Premium for 250/day")
         st.stop()
     
-    # CHAT
+    # CHAT - FULLY FIXED
     if menu == "💬 Chat":
         st.title("💬 AI Study Assistant")
         
@@ -498,54 +500,50 @@ if st.session_state.user:
         
         st.markdown("---")
         
-        # Display messages
+        # Display ALL messages
         for message in st.session_state.chat_messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
         
-        # Chat input with CIRCULAR stop button (FIXED)
-        if st.session_state.is_generating:
-            # Show stop button during generation
-            cols = st.columns([20, 1])
-            with cols[0]:
-                st.chat_input("Type your question...", key="chat_input_disabled", disabled=True)
-            with cols[1]:
-                st.markdown('<div class="stop-button">', unsafe_allow_html=True)
-                if st.button("⏹", key="stop_chat_circular"):
-                    st.session_state.stop_generation = True
-                st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            # Normal chat input when not generating
+        # Chat input area - FIXED
+        if not st.session_state.is_generating:
+            # Normal input when NOT generating
             prompt = st.chat_input("Type your question...", key="chat_input")
             
             if prompt:
+                # Add user message
                 st.session_state.chat_messages.append({"role": "user", "content": prompt})
-                
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-                
+                st.session_state.pending_message = prompt
                 st.session_state.is_generating = True
                 st.session_state.stop_generation = False
                 st.rerun()
+        else:
+            # Show disabled input + stop button when generating
+            cols = st.columns([20, 1])
+            with cols[0]:
+                st.chat_input("Generating response...", key="chat_input_disabled", disabled=True)
+            with cols[1]:
+                st.markdown('<div class="stop-button">', unsafe_allow_html=True)
+                if st.button("⏹", key="stop_chat_btn"):
+                    st.session_state.stop_generation = True
+                st.markdown('</div>', unsafe_allow_html=True)
         
-        # Generate response (FIXED LINE 514)
-        if st.session_state.is_generating:
-            if len(st.session_state.chat_messages) > 0:
-                last_msg = st.session_state.chat_messages[-1]
-                if last_msg["role"] == "user":
-                    with st.chat_message("assistant"):
-                        message_placeholder = st.empty()
-                        full_response = stream_response(last_msg["content"], message_placeholder)
-                        
-                        st.session_state.chat_messages.append({"role": "assistant", "content": full_response})
-                        
-                        if "[⏹️" not in full_response:
-                            save_chat_message(last_msg["content"], full_response)
-                        
-                        st.session_state.is_generating = False
-                        st.rerun()
+        # Process generation
+        if st.session_state.is_generating and st.session_state.pending_message:
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                full_response = stream_response(st.session_state.pending_message, message_placeholder)
+                
+                st.session_state.chat_messages.append({"role": "assistant", "content": full_response})
+                
+                if "[⏹️" not in full_response:
+                    save_chat_message(st.session_state.pending_message, full_response)
+                
+                st.session_state.is_generating = False
+                st.session_state.pending_message = None
+                st.rerun()
     
-    # QUIZ
+    # QUIZ - BUTTON REPLACEMENT FIXED
     elif menu == "📝 Quiz":
         st.title("📝 Quiz Generator")
         
@@ -557,8 +555,9 @@ if st.session_state.user:
         with col2:
             num_questions = st.slider("❓ Questions:", 3, 10, 5, key="quiz_num")
         
-        # Button replacement with CIRCULAR STOP
+        # BUTTON REPLACEMENT - Generate disappears, Stop appears
         if not st.session_state.is_generating:
+            # Show GENERATE button
             if st.button("🎯 Generate Quiz", use_container_width=True, key="gen_quiz", type="primary"):
                 if not topic:
                     st.error("❌ Enter a topic first!")
@@ -568,13 +567,9 @@ if st.session_state.user:
                     st.session_state.current_response = ""
                     st.rerun()
         else:
-            # CIRCULAR STOP BUTTON
-            col1, col2, col3 = st.columns([1, 1, 1])
-            with col2:
-                st.markdown('<div class="stop-button" style="text-align: center;">', unsafe_allow_html=True)
-                if st.button("⏹", key="stop_quiz_circular", use_container_width=True):
-                    st.session_state.stop_generation = True
-                st.markdown('</div>', unsafe_allow_html=True)
+            # Show STOP button (Generate is hidden)
+            if st.button("⏹️ Stop Generating", use_container_width=True, key="stop_quiz_btn", type="secondary"):
+                st.session_state.stop_generation = True
         
         # Generate quiz
         if st.session_state.is_generating and topic and not st.session_state.quiz_generated:
@@ -640,7 +635,7 @@ etc."""
                 key="dl_quiz_saved"
             )
     
-    # IMAGE
+    # IMAGE - BUTTON REPLACEMENT
     elif menu == "📁 Image":
         st.title("📁 Image Analysis")
         
@@ -650,18 +645,14 @@ etc."""
             img = PIL.Image.open(file)
             st.image(img, use_container_width=True, caption="Uploaded Image")
             
+            # BUTTON REPLACEMENT
             if not st.session_state.is_generating:
                 if st.button("🔍 Analyze Image", use_container_width=True, key="analyze_img", type="primary"):
                     st.session_state.is_generating = True
                     st.rerun()
             else:
-                # CIRCULAR STOP BUTTON
-                col1, col2, col3 = st.columns([1, 1, 1])
-                with col2:
-                    st.markdown('<div class="stop-button" style="text-align: center;">', unsafe_allow_html=True)
-                    if st.button("⏹", key="stop_img_circular", use_container_width=True):
-                        st.session_state.stop_generation = True
-                    st.markdown('</div>', unsafe_allow_html=True)
+                if st.button("⏹️ Stop Analysis", use_container_width=True, key="stop_img_btn", type="secondary"):
+                    st.session_state.stop_generation = True
             
             if st.session_state.is_generating:
                 st.markdown("---")
@@ -690,7 +681,7 @@ etc."""
                 st.session_state.is_generating = False
                 st.rerun()
     
-    # TUTOR
+    # TUTOR - BUTTON REPLACEMENT
     elif menu == "🎯 Tutor":
         st.title("🎯 Socratic Tutor")
         st.info("💡 Learn through guided questions instead of direct answers!")
@@ -698,6 +689,7 @@ etc."""
         problem = st.text_area("📝 Describe your problem or question:", height=150, key="tutor_prob", 
                                placeholder="e.g., I don't understand how photosynthesis works...")
         
+        # BUTTON REPLACEMENT
         if not st.session_state.is_generating:
             if st.button("🚀 Start Tutoring Session", use_container_width=True, key="start_tutor", type="primary"):
                 if not problem:
@@ -706,13 +698,8 @@ etc."""
                     st.session_state.is_generating = True
                     st.rerun()
         else:
-            # CIRCULAR STOP BUTTON
-            col1, col2, col3 = st.columns([1, 1, 1])
-            with col2:
-                st.markdown('<div class="stop-button" style="text-align: center;">', unsafe_allow_html=True)
-                if st.button("⏹", key="stop_tutor_circular", use_container_width=True):
-                    st.session_state.stop_generation = True
-                st.markdown('</div>', unsafe_allow_html=True)
+            if st.button("⏹️ Stop Session", use_container_width=True, key="stop_tutor_btn", type="secondary"):
+                st.session_state.stop_generation = True
         
         if st.session_state.is_generating and problem:
             st.markdown("---")
@@ -859,6 +846,7 @@ Start with: "Let me help you think through this step by step..."
                                  key="ai_prefs",
                                  height=80)
             
+            # BUTTON REPLACEMENT
             if not st.session_state.is_generating:
                 if st.button("🎯 Generate AI Schedule", use_container_width=True, key="gen_ai", type="primary"):
                     if not subjects:
@@ -867,13 +855,8 @@ Start with: "Let me help you think through this step by step..."
                         st.session_state.is_generating = True
                         st.rerun()
             else:
-                # CIRCULAR STOP BUTTON
-                col1, col2, col3 = st.columns([1, 1, 1])
-                with col2:
-                    st.markdown('<div class="stop-button" style="text-align: center;">', unsafe_allow_html=True)
-                    if st.button("⏹", key="stop_ai_circular", use_container_width=True):
-                        st.session_state.stop_generation = True
-                    st.markdown('</div>', unsafe_allow_html=True)
+                if st.button("⏹️ Stop Generating", use_container_width=True, key="stop_ai_btn", type="secondary"):
+                    st.session_state.stop_generation = True
             
             if st.session_state.is_generating and subjects:
                 st.markdown("---")

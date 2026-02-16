@@ -14,14 +14,15 @@ except:
     st.error("Check Secrets!")
     st.stop()
 
-# --- 2. BUG KILLER: PERSISTENT CHAT HISTORY ---
-# This block prevents messages from disappearing
+# --- 2. PERSISTENCE LAYER ---
 if "messages" not in st.session_state:
-    st.session_state.messages = []  # List to hold the current conversation
+    st.session_state.messages = []
 if "user_uuid" not in st.session_state:
     st.session_state.user_uuid = str(uuid.uuid4())
 if "is_premium" not in st.session_state:
     st.session_state.is_premium = False
+if "current_test_questions" not in st.session_state:
+    st.session_state.current_test_questions = None
 
 # --- 3. DATABASE LOGIC ---
 def get_usage():
@@ -33,19 +34,14 @@ def get_usage():
 
 def save_to_db(role, content, type="text"):
     try:
-        supabase.table("history").insert({
-            "user_id": st.session_state.user_uuid, 
-            "role": role, 
-            "content": content,
-            "interaction_type": type
-        }).execute()
+        supabase.table("history").insert({"user_id": st.session_state.user_uuid, "role": role, "content": content, "interaction_type": type}).execute()
     except: pass
 
 # --- 4. SIDEBAR ---
 st.sidebar.title("🎓 Study Master Pro")
 if not st.session_state.is_premium:
     code = st.sidebar.text_input("Premium Code", type="password")
-    if st.sidebar.button("Redeem") and code == "NOVEMBER27":
+    if st.sidebar.button("Redeem") and code == "STUDY777":
         st.session_state.is_premium = True
         st.rerun()
 
@@ -53,7 +49,12 @@ usage = get_usage()
 limit = 250 if st.session_state.is_premium else 50
 st.sidebar.metric("24h Usage", f"{usage}/{limit}")
 
-menu = st.sidebar.selectbox("Features", ["Chat Assistant", "File & Voice Lab", "Teacher Mode", "AI Scheduler"])
+menu = st.sidebar.selectbox("Features", ["Chat Assistant", "Teacher Mode (Test)", "File Lab", "AI Scheduler"])
+
+# --- SIGNATURE ---
+st.sidebar.markdown("---")
+st.sidebar.write("✨ **Made by Aarya**")
+st.sidebar.write("❤️ *Made with love*")
 
 # --- 5. AI ENGINE ---
 def ask_ai(prompt, system="You are a helpful study tutor."):
@@ -68,71 +69,74 @@ def ask_ai(prompt, system="You are a helpful study tutor."):
 
 # --- 6. MODULES ---
 
-# A. CHAT ASSISTANT (FIXED: NO DISAPPEARING MESSAGES)
+# A. CHAT ASSISTANT
 if menu == "Chat Assistant":
-    st.header("💬 Persistent Study Chat")
-    
-    # Display old messages from this session
+    st.header("💬 Study Chat")
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
     if prompt := st.chat_input("Ask a question..."):
-        # Add user message to state and DB
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with st.chat_message("user"): st.markdown(prompt)
         
-        # Get AI response
         ans = ask_ai(prompt)
-        
-        if ans == "LIMIT_REACHED":
-            st.error("Limit reached! Use code STUDY777")
+        if ans == "LIMIT_REACHED": st.error("Limit reached!")
         else:
-            with st.chat_message("assistant"):
-                st.markdown(ans)
+            with st.chat_message("assistant"): st.markdown(ans)
             st.session_state.messages.append({"role": "assistant", "content": ans})
-            save_to_db("user", prompt)
-            save_to_db("assistant", ans)
+            save_to_db("user", prompt); save_to_db("assistant", ans)
 
-# B. FILE & VOICE LAB
-elif menu == "File & Voice Lab":
-    st.header("📁 Multimedia Notes")
-    st.info("Upload a file or record audio to get AI summaries.")
+# B. TEACHER MODE (WITH ANSWERING PART)
+elif menu == "Teacher Mode (Test)":
+    st.header("👨‍🏫 Teacher Mode: Assessment")
     
-    file_type = st.radio("Select Type", ["Image/PDF", "Voice Message"])
-    
-    if file_type == "Image/PDF":
-        uploaded_file = st.file_uploader("Upload Study Material", type=['png', 'jpg', 'pdf'])
-        if uploaded_file and st.button("Generate Notes"):
-            # Logic: In a real app, you'd extract text here. For now, we simulate OCR:
-            with st.spinner("Analyzing document..."):
-                simulated_notes = ask_ai(f"I have a document titled {uploaded_file.name}. Provide a detailed study summary of what this document likely contains based on the subject.")
-                st.subheader("📝 Generated Notes")
-                st.write(simulated_notes)
-                save_to_db("user", f"Uploaded {uploaded_file.name}", "file")
-    
-    else:
-        audio_file = st.audio_input("Record your question")
-        if audio_file and st.button("Transcribe & Answer"):
-            st.warning("Note: Voice processing requires Groq Whisper API. Simulating response...")
-            voice_ans = ask_ai("The user sent a voice message asking for study help. Give general encouragement and a sample study tip.")
-            st.write(voice_ans)
+    # Step 1: Generate Questions
+    topic = st.text_input("What subject or topic should I test you on?")
+    if st.button("Generate Questions"):
+        with st.spinner("Preparing test..."):
+            questions = ask_ai(f"Give me 5 challenging questions about {topic}. Do not provide answers.")
+            st.session_state.current_test_questions = questions
+            st.session_state.current_topic = topic
 
-# C. AI SCHEDULER
+    # Step 2: Answering Part
+    if st.session_state.current_test_questions:
+        st.divider()
+        st.subheader("Questions:")
+        st.info(st.session_state.current_test_questions)
+        
+        st.subheader("Your Answers:")
+        user_answers = st.text_area("Type your answers here (label them 1 to 5):", height=200)
+        
+        if st.button("Submit & Get Results"):
+            with st.spinner("Grading..."):
+                grading_prompt = f"""
+                Topic: {st.session_state.current_topic}
+                Questions: {st.session_state.current_test_questions}
+                User's Answers: {user_answers}
+                
+                Please grade these answers strictly. Provide a total score out of 10 and 
+                explain which ones were correct and what needs improvement.
+                """
+                results = ask_ai(grading_prompt)
+                st.success("### Results & Feedback")
+                st.markdown(results)
+                save_to_db("teacher", results, "test_result")
+
+# C. FILE LAB
+elif menu == "File Lab":
+    st.header("📁 File to Notes")
+    uploaded_file = st.file_uploader("Upload PDF or Image", type=['png', 'jpg', 'pdf'])
+    if uploaded_file and st.button("Generate Summary"):
+        notes = ask_ai(f"I've uploaded {uploaded_file.name}. Summarize the core concepts of this topic for me.")
+        st.write(notes)
+        save_to_db("user", f"File: {uploaded_file.name}", "file_upload")
+
+# D. AI SCHEDULER
 elif menu == "AI Scheduler":
-    st.header("📅 Study Timetable Generator")
-    subs = st.text_input("Subjects (e.g. Math, Physics, History)")
-    hrs = st.slider("Hours per day", 1, 12, 5)
-    if st.button("Create Plan"):
-        plan = ask_ai(f"Create a strict {hrs}-hour study schedule for: {subs}. Format as a table.")
+    st.header("📅 Timetable Generator")
+    s = st.text_input("List subjects")
+    h = st.slider("Hours available", 1, 12, 4)
+    if st.button("Get Schedule"):
+        plan = ask_ai(f"Create a table for a {h}-hour study session for: {s}.")
         st.markdown(plan)
-
-# D. TEACHER MODE
-elif menu == "Teacher Mode":
-    st.header("👨‍🏫 AI Teacher")
-    topic = st.text_input("Enter topic for test")
-    if topic and st.button("Get Test"):
-        test = ask_ai(f"Give 5 questions about {topic}. No answers.")
-        st.write(test)
-

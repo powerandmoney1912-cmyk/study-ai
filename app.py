@@ -101,8 +101,10 @@ if "is_premium" not in st.session_state:
     st.session_state.is_premium = False
 if "schedules" not in st.session_state:
     st.session_state.schedules = []
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-# --- 5. USAGE TRACKER (FIXED - COUNTS ALL INTERACTIONS) ---
+# --- 5. USAGE TRACKER ---
 def get_daily_usage():
     """Counts all AI interactions in last 24 hours"""
     if not supabase or not st.session_state.user:
@@ -116,7 +118,52 @@ def get_daily_usage():
     except:
         return 0
 
-# --- 6. SCHEDULE MANAGEMENT FUNCTIONS ---
+# --- 6. CHAT HISTORY FUNCTIONS ---
+def load_chat_history():
+    """Load recent chat history from database"""
+    if not supabase or not st.session_state.user:
+        return []
+    try:
+        res = supabase.table("history").select("*").eq(
+            "user_id", st.session_state.user.id
+        ).order("created_at", desc=True).limit(20).execute()
+        
+        if res.data:
+            # Reverse to show oldest first
+            return list(reversed(res.data))
+        return []
+    except:
+        return []
+
+def save_chat_message(question, answer):
+    """Save chat message to database"""
+    if not supabase or not st.session_state.user:
+        return False
+    try:
+        supabase.table("history").insert({
+            "user_id": st.session_state.user.id,
+            "question": question,
+            "answer": answer,
+            "created_at": datetime.now().isoformat()
+        }).execute()
+        return True
+    except:
+        return False
+
+def clear_chat_history():
+    """Clear all chat history for user"""
+    if not supabase or not st.session_state.user:
+        return False
+    try:
+        supabase.table("history").delete().eq(
+            "user_id", st.session_state.user.id
+        ).execute()
+        st.session_state.chat_history = []
+        return True
+    except:
+        return False
+
+# --- 7. SCHEDULE MANAGEMENT FUNCTIONS ---
 def save_schedule(schedule_data):
     """Save schedule to Supabase"""
     if not supabase or not st.session_state.user:
@@ -155,52 +202,103 @@ def delete_schedule(schedule_id):
     except:
         return False
 
-# --- 7. LOGIN SCREEN ---
+# --- 8. IMPROVED LOGIN SCREEN (AUTO-LOGIN AFTER SIGNUP) ---
 def login_screen():
     st.title("🎓 Study Master Pro")
     st.subheader("Your AI-Powered Study Companion")
     
+    # Show features
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info("💬 **AI Chat**\nAsk anything!")
+    with col2:
+        st.info("📝 **Quiz Gen**\nCustom quizzes")
+    with col3:
+        st.info("📅 **Planner**\nStudy schedules")
+    
     if not supabase:
-        st.error("Supabase connection failed.")
+        st.error("Connection failed. Check Supabase settings.")
         return
     
-    tab1, tab2 = st.tabs(["Login", "Sign Up"])
+    tab1, tab2 = st.tabs(["🔑 Login", "✨ Sign Up"])
     
     with tab1:
+        st.write("### Welcome Back!")
         email = st.text_input("Email", key="l_email")
         password = st.text_input("Password", type="password", key="l_pass")
         
-        if st.button("Log In", use_container_width=True):
+        if st.button("🚀 Log In", use_container_width=True, type="primary"):
             if email and password:
                 try:
-                    res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                    res = supabase.auth.sign_in_with_password({
+                        "email": email, 
+                        "password": password
+                    })
                     st.session_state.user = res.user
+                    st.success("✅ Logged in successfully!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Login failed: {e}")
+                    st.error(f"❌ Login failed: {str(e)}")
             else:
-                st.error("Enter email and password")
+                st.error("Please enter both email and password")
     
     with tab2:
-        new_email = st.text_input("Email", key="s_email")
-        new_pass = st.text_input("Password (6+ chars)", type="password", key="s_pass")
-        confirm_pass = st.text_input("Confirm Password", type="password", key="s_confirm")
+        st.write("### Create Your Account")
+        st.info("🎁 Get 50 free AI interactions daily!")
         
-        if st.button("Create Account", use_container_width=True):
+        new_email = st.text_input("Email Address", key="s_email", 
+                                   placeholder="student@example.com")
+        new_pass = st.text_input("Password (min 6 characters)", 
+                                  type="password", key="s_pass")
+        confirm_pass = st.text_input("Confirm Password", 
+                                      type="password", key="s_confirm")
+        
+        # Terms checkbox
+        agree = st.checkbox("I agree to the Terms of Service", key="agree")
+        
+        if st.button("🎉 Create Account", use_container_width=True, type="primary"):
             if not new_email or not new_pass:
-                st.error("Fill all fields")
+                st.error("❌ Please fill in all fields")
             elif len(new_pass) < 6:
-                st.error("Password too short")
+                st.error("❌ Password must be at least 6 characters")
             elif new_pass != confirm_pass:
-                st.error("Passwords don't match")
+                st.error("❌ Passwords don't match")
+            elif not agree:
+                st.error("❌ Please agree to Terms of Service")
             else:
                 try:
-                    supabase.auth.sign_up({"email": new_email, "password": new_pass})
-                    st.success("✅ Account created! Check email to verify.")
+                    with st.spinner("Creating your account..."):
+                        # Sign up the user
+                        res = supabase.auth.sign_up({
+                            "email": new_email, 
+                            "password": new_pass
+                        })
+                        
+                        # Check if email confirmation is required
+                        if res.user:
+                            # AUTO-LOGIN: Set user in session
+                            st.session_state.user = res.user
+                            
+                            st.success("🎉 Account created successfully!")
+                            st.success("✅ You're now logged in!")
+                            st.balloons()
+                            
+                            # Small delay then rerun
+                            import time
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.success("✅ Account created!")
+                            st.info("📧 Please check your email to verify your account, then log in.")
+                            
                 except Exception as e:
-                    st.error(f"Signup failed: {e}")
+                    error_msg = str(e)
+                    if "already registered" in error_msg.lower():
+                        st.error("❌ This email is already registered. Please log in.")
+                    else:
+                        st.error(f"❌ Signup failed: {error_msg}")
 
-# --- 8. MAIN APP ---
+# --- 9. MAIN APP ---
 if st.session_state.user:
     if not model:
         st.error("⚠️ AI unavailable. Check errors above.")
@@ -211,37 +309,39 @@ if st.session_state.user:
     
     # Sidebar
     st.sidebar.title("💎 Study Master Pro")
-    st.sidebar.write(f"Welcome, {st.session_state.user.email.split('@')[0]}!")
+    st.sidebar.write(f"👋 Hey, **{st.session_state.user.email.split('@')[0]}**!")
     
     # Premium
     if not st.session_state.is_premium:
-        with st.sidebar.expander("🔑 Upgrade to Premium"):
-            st.write("**Benefits:**")
-            st.write("• 250 AI interactions/day (vs 50)")
-            st.write("• Unlimited schedules")
-            st.write("• Priority support")
-            code = st.text_input("Premium Code", type="password", key="prem")
-            if st.button("Activate", key="activate_premium"):
+        with st.sidebar.expander("⭐ Upgrade to Premium"):
+            st.write("**Premium Benefits:**")
+            st.write("✅ 250 AI uses/day (vs 50)")
+            st.write("✅ Unlimited schedules")
+            st.write("✅ Priority support")
+            st.write("✅ Early access to features")
+            code = st.text_input("Enter Code", type="password", key="prem")
+            if st.button("Activate Premium", key="activate_premium"):
                 if code == "STUDY777":
                     st.session_state.is_premium = True
                     st.success("🎉 Premium Activated!")
+                    st.balloons()
                     st.rerun()
                 else:
                     st.error("Invalid code")
     else:
-        st.sidebar.success("✨ Premium Member")
+        st.sidebar.success("⭐ Premium Member")
     
-    # Usage Counter (FIXED - Shows correct limit)
+    # Usage Counter
     usage = get_daily_usage()
     limit = 250 if st.session_state.is_premium else 50
     
     if usage >= limit:
-        st.sidebar.error(f"🚫 Limit Reached: {usage}/{limit}")
+        st.sidebar.error(f"🚫 Limit: {usage}/{limit}")
     else:
         st.sidebar.metric("Today's Usage", f"{usage}/{limit}")
     
     st.sidebar.progress(min(usage/limit, 1.0))
-    st.sidebar.caption("Resets every 24 hours")
+    st.sidebar.caption("⏰ Resets every 24 hours")
     
     # Menu
     menu = st.sidebar.radio("📚 Navigation", [
@@ -252,42 +352,72 @@ if st.session_state.user:
         "📅 Schedule Planner"
     ])
     
-    if st.sidebar.button("🚪 Logout"):
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.session_state.user = None
+        st.session_state.chat_history = []
+        st.success("Logged out successfully!")
         st.rerun()
     
     # Check usage limit
-    if usage >= limit:
+    if usage >= limit and menu != "📅 Schedule Planner":
         st.error(f"⚠️ Daily limit reached ({usage}/{limit})")
-        st.info("💎 Upgrade to Premium for 250 interactions/day!")
+        st.info("💎 **Upgrade to Premium** for 250 interactions/day!")
         st.info("⏰ Or wait for your 24-hour reset")
-        
-        # Still allow schedule planner viewing
-        if menu != "📅 Schedule Planner":
-            st.stop()
+        st.stop()
     
     # Features
     if menu == "💬 Chat":
-        st.subheader("💬 AI Study Chat")
-        st.write("Ask me anything about your studies!")
+        st.subheader("💬 AI Study Assistant")
         
+        # Chat controls
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.write("Ask me anything about your studies!")
+        with col2:
+            if st.button("📜 Load History", key="load_hist"):
+                st.session_state.chat_history = load_chat_history()
+                st.success("History loaded!")
+        with col3:
+            if st.button("🗑️ Clear Chat", key="clear_hist"):
+                if clear_chat_history():
+                    st.success("Chat cleared!")
+                    st.rerun()
+        
+        st.markdown("---")
+        
+        # Display chat history
+        if st.session_state.chat_history:
+            for msg in st.session_state.chat_history:
+                with st.chat_message("user"):
+                    st.write(msg.get("question", ""))
+                with st.chat_message("assistant"):
+                    st.write(msg.get("answer", ""))
+        
+        # Chat input
         q = st.chat_input("Type your question...")
+        
         if q:
+            # Display user message
             with st.chat_message("user"):
                 st.write(q)
+            
             try:
                 with st.spinner("Thinking..."):
                     resp = model.generate_content(q)
+                
+                # Display AI response
                 with st.chat_message("assistant"):
                     st.write(resp.text)
                 
-                # Save to history
-                if supabase:
-                    supabase.table("history").insert({
-                        "user_id": st.session_state.user.id,
+                # Save to database and session
+                if save_chat_message(q, resp.text):
+                    st.session_state.chat_history.append({
                         "question": q,
-                        "answer": resp.text
-                    }).execute()
+                        "answer": resp.text,
+                        "created_at": datetime.now().isoformat()
+                    })
+                
             except Exception as e:
                 st.error(f"Error: {e}")
     
@@ -303,7 +433,7 @@ if st.session_state.user:
         with col2:
             num_questions = st.slider("Questions:", 3, 10, 5, key="quiz_num")
         
-        if st.button("🎯 Generate Quiz", use_container_width=True, key="generate_quiz_btn"):
+        if st.button("🎯 Generate Quiz", use_container_width=True, key="generate_quiz_btn", type="primary"):
             if not topic:
                 st.error("Please enter a topic!")
             else:
@@ -359,7 +489,7 @@ etc."""
                 img = PIL.Image.open(file)
                 st.image(img, caption="Your upload", use_container_width=True)
                 
-                if st.button("🔍 Analyze Image", use_container_width=True, key="analyze_img_btn"):
+                if st.button("🔍 Analyze Image", use_container_width=True, key="analyze_img_btn", type="primary"):
                     with st.spinner("Analyzing..."):
                         resp = model.generate_content([
                             """Analyze this study material:
@@ -391,7 +521,7 @@ etc."""
         
         problem = st.text_area("Describe your problem:", height=150, key="tutor_problem")
         
-        if st.button("🚀 Start Session", use_container_width=True, key="start_tutor_btn"):
+        if st.button("🚀 Start Session", use_container_width=True, key="start_tutor_btn", type="primary"):
             if not problem:
                 st.error("Please describe your problem!")
             else:
@@ -467,7 +597,7 @@ Start with: "Let me help you think through this..."
                 
                 st.markdown("---")
             
-            if st.button("💾 Save Schedule", use_container_width=True, key="save_schedule"):
+            if st.button("💾 Save Schedule", use_container_width=True, key="save_schedule", type="primary"):
                 if not schedule_name:
                     st.error("Please enter a schedule name!")
                 elif not study_blocks:
@@ -493,12 +623,12 @@ Start with: "Let me help you think through this..."
             schedules = load_schedules()
             
             if not schedules:
-                st.info("No schedules yet. Create one in the 'Create Schedule' tab!")
+                st.info("📅 No schedules yet. Create one in the 'Create Schedule' tab!")
             else:
                 for schedule in schedules:
                     schedule_data = json.loads(schedule["schedule_data"])
                     
-                    with st.expander(f"📅 {schedule_data['name']}"):
+                    with st.expander(f"📅 {schedule_data['name']}", expanded=False):
                         st.write(f"**Period:** {schedule_data['start_date']} to {schedule_data['end_date']}")
                         st.write(f"**Created:** {schedule['created_at'][:10]}")
                         
@@ -509,19 +639,18 @@ Start with: "Let me help you think through this..."
                         
                         col1, col2 = st.columns(2)
                         with col1:
-                            if st.button("📥 Download", key=f"download_{schedule['id']}"):
-                                text = f"{schedule_data['name']}\n"
-                                text += f"Period: {schedule_data['start_date']} to {schedule_data['end_date']}\n\n"
-                                for i, block in enumerate(schedule_data['blocks'], 1):
-                                    text += f"{i}. {block['subject']} - {block['start_time']} ({block['duration']})\n"
-                                    text += f"   Topic: {block['topic']}\n\n"
-                                
-                                st.download_button(
-                                    "Confirm Download",
-                                    data=text,
-                                    file_name=f"{schedule_data['name']}.txt",
-                                    key=f"confirm_dl_{schedule['id']}"
-                                )
+                            text = f"{schedule_data['name']}\n"
+                            text += f"Period: {schedule_data['start_date']} to {schedule_data['end_date']}\n\n"
+                            for i, block in enumerate(schedule_data['blocks'], 1):
+                                text += f"{i}. {block['subject']} - {block['start_time']} ({block['duration']})\n"
+                                text += f"   Topic: {block['topic']}\n\n"
+                            
+                            st.download_button(
+                                "📥 Download",
+                                data=text,
+                                file_name=f"{schedule_data['name']}.txt",
+                                key=f"dl_{schedule['id']}"
+                            )
                         
                         with col2:
                             if st.button("🗑️ Delete", key=f"delete_{schedule['id']}"):
@@ -548,7 +677,7 @@ Start with: "Let me help you think through this..."
                                        placeholder="e.g., I'm a morning person, need breaks every hour",
                                        key="ai_prefs")
             
-            if st.button("🎯 Generate AI Schedule", use_container_width=True, key="gen_ai_schedule"):
+            if st.button("🎯 Generate AI Schedule", use_container_width=True, key="gen_ai_schedule", type="primary"):
                 if not subjects:
                     st.error("Please enter subjects!")
                 else:

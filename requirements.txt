@@ -1,45 +1,4 @@
-streamlit>=1.28.0
-google-generativeai>=0.3.0
-supabase>=2.0.0
-Pillow>=10.0.0
-```
-
-**If it already has these, you're good!** ✅  
-**If not**, add the missing ones.
-
----
-
-## Step 3: Wait & Test
-
-1. **Wait 30-60 seconds** for Streamlit to redeploy
-2. **Refresh your app** in the browser
-3. **Check sidebar** - should see:
-```
-   🤖 API Calls: 0/20 (Google Free Tier)
-```
-4. **Done!** 🎉
-
----
-
-## 📁 Your Final File Structure
-```
-your-repo/
-├── app.py                          ← Replace this with fixed code
-├── requirements.txt                ← Keep as is (if it has the packages)
-└── .streamlit/secrets.toml         ← Don't change (your API keys)
-```
-
-That's it! Just **replace app.py**, push, and you're done! 🚀
-
----
-
-## Quick Visual Guide:
-```
-1. Download: study_master_RATE_LIMIT_FIX.py ✅
-2. Open your project folder
-3. Backup: Rename app.py → app_old.py
-4. Rename: study_master_RATE_LIMIT_FIX.py → app.py
-5. Push to GitHub
-6. Wait 30 seconds
-7. Refresh app
-8. DONE! 🎉
+streamlit
+google-generativeai
+supabase
+PIL

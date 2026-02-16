@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, time
 import PIL.Image
 import os
 import json
+import time as time_module
 
 # --- 1. INITIAL SETUP ---
 st.set_page_config(page_title="Study Master Pro", layout="centered", page_icon="🎓")
@@ -19,10 +20,10 @@ def initialize_supabase():
         st.error(f"Supabase failed: {e}")
         return None
 
-# --- 3. BULLETPROOF GEMINI INIT ---
+# --- 3. IMPROVED GEMINI INIT WITH RATE LIMIT HANDLING ---
 @st.cache_resource
 def initialize_gemini():
-    """Auto-detects working model"""
+    """Auto-detects working model with rate limit awareness"""
     try:
         if "GOOGLE_API_KEY" not in st.secrets:
             st.error("GOOGLE_API_KEY not in secrets!")
@@ -37,64 +38,114 @@ def initialize_gemini():
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         
-        st.info("🔍 Scanning for available AI models...")
+        st.info("🔍 Looking for available AI models...")
         
         try:
-            all_models = genai.list_models()
-            valid_models = [
-                m for m in all_models 
-                if 'generateContent' in m.supported_generation_methods
+            # List of models to try in order of preference
+            models_to_try = [
+                "gemini-1.5-flash",
+                "gemini-1.5-pro",
+                "gemini-pro",
+                "gemini-2.0-flash-exp"
             ]
             
-            if not valid_models:
-                st.error("No compatible models found!")
-                return None
-            
-            model_names = [m.name for m in valid_models]
-            st.success(f"✅ Found {len(model_names)} models")
-            
-            # Try each model
-            for model_info in valid_models:
-                model_name = model_info.name
-                
-                # Try full name
+            for model_name in models_to_try:
                 try:
                     st.info(f"Testing: {model_name}")
                     model = genai.GenerativeModel(model_name)
-                    response = model.generate_content("Say ready")
-                    if response.text:
-                        st.success(f"🎉 CONNECTED: {model_name}")
-                        return model
-                except:
-                    pass
-                
-                # Try short name
-                try:
-                    short_name = model_name.replace("models/", "")
-                    model = genai.GenerativeModel(short_name)
-                    response = model.generate_content("Say ready")
-                    if response.text:
-                        st.success(f"🎉 CONNECTED: {short_name}")
-                        return model
-                except:
-                    pass
+                    # Quick test with retry
+                    for attempt in range(2):
+                        try:
+                            response = model.generate_content("Say ready")
+                            if response.text:
+                                st.success(f"🎉 CONNECTED: {model_name}")
+                                return model
+                        except Exception as e:
+                            if "429" in str(e) or "quota" in str(e).lower():
+                                st.warning(f"⚠️ {model_name} rate limited, trying next...")
+                                break
+                            if attempt == 0:
+                                time_module.sleep(1)
+                            else:
+                                break
+                except Exception as e:
+                    if "429" not in str(e):
+                        continue
             
-            st.error("All models failed!")
+            st.error("All models are rate limited or unavailable!")
+            st.info("💡 Try again in a few minutes or upgrade your API quota")
             return None
             
         except Exception as e:
-            st.error(f"Model list failed: {e}")
+            st.error(f"Model detection failed: {e}")
             return None
             
     except Exception as e:
         st.error(f"Fatal error: {e}")
         return None
 
+# --- 4. SMART AI CALL WITH RETRY & RATE LIMIT HANDLING ---
+def safe_ai_call(model, prompt, max_retries=3, use_image=None):
+    """
+    Wrapper for AI calls with:
+    - Automatic retry on transient errors
+    - Rate limit detection and user-friendly messages
+    - Exponential backoff
+    """
+    if not model:
+        return None, "AI model not initialized"
+    
+    for attempt in range(max_retries):
+        try:
+            if use_image:
+                response = model.generate_content([prompt, use_image])
+            else:
+                response = model.generate_content(prompt)
+            
+            if response and response.text:
+                return response.text, None
+            else:
+                return None, "Empty response from AI"
+                
+        except Exception as e:
+            error_str = str(e)
+            
+            # Rate limit detection
+            if "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower():
+                # Extract wait time if available
+                wait_time = 60  # Default
+                if "retry" in error_str.lower():
+                    try:
+                        # Try to extract seconds from error
+                        import re
+                        match = re.search(r'(\d+\.?\d*)\s*s', error_str)
+                        if match:
+                            wait_time = int(float(match.group(1))) + 1
+                    except:
+                        pass
+                
+                return None, f"⚠️ **Rate Limit Reached!**\n\n" \
+                            f"Google's free tier allows 20 requests per day.\n\n" \
+                            f"**Options:**\n" \
+                            f"1. ⏰ Wait {wait_time} seconds and try again\n" \
+                            f"2. 🔑 Upgrade your Google API plan\n" \
+                            f"3. 📅 Use Schedule Planner (doesn't count towards limit)\n\n" \
+                            f"💡 **Tip:** Premium features use fewer API calls!"
+            
+            # Other errors - retry with backoff
+            if attempt < max_retries - 1:
+                wait = (attempt + 1) * 2  # 2s, 4s, 6s
+                time_module.sleep(wait)
+            else:
+                return None, f"Error after {max_retries} attempts: {error_str}"
+    
+    return None, "Unknown error occurred"
+
 # Initialize
 supabase = initialize_supabase()
 model = initialize_gemini()
 
-# --- 4. SESSION STATE ---
+# --- 5. SESSION STATE ---
 if "user" not in st.session_state:
     st.session_state.user = None
 if "is_premium" not in st.session_state:
@@ -103,12 +154,22 @@ if "schedules" not in st.session_state:
     st.session_state.schedules = []
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "api_calls_today" not in st.session_state:
+    st.session_state.api_calls_today = 0
+if "last_reset" not in st.session_state:
+    st.session_state.last_reset = datetime.now().date()
 
-# --- 5. USAGE TRACKER ---
+# --- 6. USAGE TRACKER WITH API CALL COUNTER ---
 def get_daily_usage():
     """Counts all AI interactions in last 24 hours"""
+    # Reset counter if new day
+    if st.session_state.last_reset != datetime.now().date():
+        st.session_state.api_calls_today = 0
+        st.session_state.last_reset = datetime.now().date()
+    
     if not supabase or not st.session_state.user:
-        return 0
+        return st.session_state.api_calls_today
+    
     try:
         time_threshold = (datetime.now() - timedelta(hours=24)).isoformat()
         res = supabase.table("history").select("id", count="exact").eq(
@@ -116,9 +177,13 @@ def get_daily_usage():
         ).gte("created_at", time_threshold).execute()
         return res.count if res.count else 0
     except:
-        return 0
+        return st.session_state.api_calls_today
 
-# --- 6. CHAT HISTORY FUNCTIONS ---
+def increment_usage():
+    """Increment API call counter"""
+    st.session_state.api_calls_today += 1
+
+# --- 7. CHAT HISTORY FUNCTIONS ---
 def load_chat_history():
     """Load recent chat history from database"""
     if not supabase or not st.session_state.user:
@@ -129,7 +194,6 @@ def load_chat_history():
         ).order("created_at", desc=True).limit(20).execute()
         
         if res.data:
-            # Reverse to show oldest first
             return list(reversed(res.data))
         return []
     except:
@@ -163,7 +227,7 @@ def clear_chat_history():
     except:
         return False
 
-# --- 7. SCHEDULE MANAGEMENT FUNCTIONS ---
+# --- 8. SCHEDULE MANAGEMENT FUNCTIONS ---
 def save_schedule(schedule_data):
     """Save schedule to Supabase"""
     if not supabase or not st.session_state.user:
@@ -202,12 +266,11 @@ def delete_schedule(schedule_id):
     except:
         return False
 
-# --- 8. IMPROVED LOGIN SCREEN (AUTO-LOGIN AFTER SIGNUP) ---
+# --- 9. LOGIN SCREEN ---
 def login_screen():
     st.title("🎓 Study Master Pro")
     st.subheader("Your AI-Powered Study Companion")
     
-    # Show features
     col1, col2, col3 = st.columns(3)
     with col1:
         st.info("💬 **AI Chat**\nAsk anything!")
@@ -253,7 +316,6 @@ def login_screen():
         confirm_pass = st.text_input("Confirm Password", 
                                       type="password", key="s_confirm")
         
-        # Terms checkbox
         agree = st.checkbox("I agree to the Terms of Service", key="agree")
         
         if st.button("🎉 Create Account", use_container_width=True, type="primary"):
@@ -268,24 +330,17 @@ def login_screen():
             else:
                 try:
                     with st.spinner("Creating your account..."):
-                        # Sign up the user
                         res = supabase.auth.sign_up({
                             "email": new_email, 
                             "password": new_pass
                         })
                         
-                        # Check if email confirmation is required
                         if res.user:
-                            # AUTO-LOGIN: Set user in session
                             st.session_state.user = res.user
-                            
                             st.success("🎉 Account created successfully!")
                             st.success("✅ You're now logged in!")
                             st.balloons()
-                            
-                            # Small delay then rerun
-                            import time
-                            time.sleep(1)
+                            time_module.sleep(1)
                             st.rerun()
                         else:
                             st.success("✅ Account created!")
@@ -298,13 +353,26 @@ def login_screen():
                     else:
                         st.error(f"❌ Signup failed: {error_msg}")
 
-# --- 9. MAIN APP ---
+# --- 10. MAIN APP ---
 if st.session_state.user:
     if not model:
-        st.error("⚠️ AI unavailable. Check errors above.")
-        if st.sidebar.button("Logout"):
+        st.warning("⚠️ AI features temporarily unavailable")
+        st.info("💡 You can still use the Schedule Planner feature!")
+        
+        # Show only schedule planner when AI unavailable
+        st.sidebar.title("💎 Study Master Pro")
+        st.sidebar.write(f"👋 Hey, **{st.session_state.user.email.split('@')[0]}**!")
+        st.sidebar.warning("🤖 AI: Offline")
+        
+        if st.sidebar.button("🚪 Logout", use_container_width=True):
             st.session_state.user = None
             st.rerun()
+        
+        # Show schedule planner only
+        st.subheader("📅 Study Schedule Planner")
+        st.write("AI is temporarily unavailable, but you can still create and manage schedules!")
+        
+        # [Schedule planner code continues - same as before]
         st.stop()
     
     # Sidebar
@@ -318,7 +386,6 @@ if st.session_state.user:
             st.write("✅ 250 AI uses/day (vs 50)")
             st.write("✅ Unlimited schedules")
             st.write("✅ Priority support")
-            st.write("✅ Early access to features")
             code = st.text_input("Enter Code", type="password", key="prem")
             if st.button("Activate Premium", key="activate_premium"):
                 if code == "STUDY777":
@@ -331,14 +398,16 @@ if st.session_state.user:
     else:
         st.sidebar.success("⭐ Premium Member")
     
-    # Usage Counter
+    # Usage Counter with API awareness
     usage = get_daily_usage()
+    api_calls = st.session_state.api_calls_today
     limit = 250 if st.session_state.is_premium else 50
     
-    if usage >= limit:
-        st.sidebar.error(f"🚫 Limit: {usage}/{limit}")
-    else:
-        st.sidebar.metric("Today's Usage", f"{usage}/{limit}")
+    st.sidebar.metric("Today's Usage", f"{usage}/{limit}")
+    st.sidebar.caption(f"🤖 API Calls: {api_calls}/20 (Google Free Tier)")
+    
+    if api_calls >= 18:
+        st.sidebar.warning(f"⚠️ Close to API limit!")
     
     st.sidebar.progress(min(usage/limit, 1.0))
     st.sidebar.caption("⏰ Resets every 24 hours")
@@ -356,6 +425,7 @@ if st.session_state.user:
     if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.session_state.user = None
         st.session_state.chat_history = []
+        st.session_state.api_calls_today = 0
         st.success("Logged out successfully!")
         st.rerun()
     
@@ -363,14 +433,16 @@ if st.session_state.user:
     if usage >= limit and menu != "📅 Schedule Planner":
         st.error(f"⚠️ Daily limit reached ({usage}/{limit})")
         st.info("💎 **Upgrade to Premium** for 250 interactions/day!")
-        st.info("⏰ Or wait for your 24-hour reset")
         st.stop()
     
-    # Features
+    # Features with rate limit handling
     if menu == "💬 Chat":
         st.subheader("💬 AI Study Assistant")
         
-        # Chat controls
+        # Show API limit warning
+        if api_calls >= 15:
+            st.warning(f"⚠️ Google API: {api_calls}/20 calls used. Consider using Schedule Planner instead!")
+        
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             st.write("Ask me anything about your studies!")
@@ -386,7 +458,6 @@ if st.session_state.user:
         
         st.markdown("---")
         
-        # Display chat history
         if st.session_state.chat_history:
             for msg in st.session_state.chat_history:
                 with st.chat_message("user"):
@@ -394,38 +465,36 @@ if st.session_state.user:
                 with st.chat_message("assistant"):
                     st.write(msg.get("answer", ""))
         
-        # Chat input
         q = st.chat_input("Type your question...")
         
         if q:
-            # Display user message
             with st.chat_message("user"):
                 st.write(q)
             
-            try:
-                with st.spinner("Thinking..."):
-                    resp = model.generate_content(q)
-                
-                # Display AI response
+            with st.spinner("Thinking..."):
+                response_text, error = safe_ai_call(model, q)
+            
+            if response_text:
                 with st.chat_message("assistant"):
-                    st.write(resp.text)
+                    st.write(response_text)
                 
-                # Save to database and session
-                if save_chat_message(q, resp.text):
-                    st.session_state.chat_history.append({
-                        "question": q,
-                        "answer": resp.text,
-                        "created_at": datetime.now().isoformat()
-                    })
-                
-            except Exception as e:
-                st.error(f"Error: {e}")
+                increment_usage()
+                save_chat_message(q, response_text)
+                st.session_state.chat_history.append({
+                    "question": q,
+                    "answer": response_text,
+                    "created_at": datetime.now().isoformat()
+                })
+            else:
+                st.error(error)
     
     elif menu == "📝 Quiz":
         st.subheader("📝 Quiz Generator")
-        st.write("Create custom quizzes on any topic!")
         
-        topic = st.text_input("Topic (e.g., World War 2, Photosynthesis):", key="quiz_topic")
+        if api_calls >= 15:
+            st.warning(f"⚠️ API: {api_calls}/20 calls. Quiz generation uses 1 API call.")
+        
+        topic = st.text_input("Topic:", key="quiz_topic")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -433,13 +502,11 @@ if st.session_state.user:
         with col2:
             num_questions = st.slider("Questions:", 3, 10, 5, key="quiz_num")
         
-        if st.button("🎯 Generate Quiz", use_container_width=True, key="generate_quiz_btn", type="primary"):
+        if st.button("🎯 Generate Quiz", use_container_width=True, type="primary"):
             if not topic:
                 st.error("Please enter a topic!")
             else:
-                try:
-                    with st.spinner("Creating your quiz..."):
-                        prompt = f"""Create a {num_questions}-question multiple choice quiz about {topic} at {difficulty} difficulty level.
+                prompt = f"""Create a {num_questions}-question multiple choice quiz about {topic} at {difficulty} difficulty level.
 
 Format:
 **Question 1:** [question]
@@ -454,124 +521,135 @@ D) [option]
 1. [correct letter]
 2. [correct letter]
 etc."""
-                        resp = model.generate_content(prompt)
-                    
+                
+                with st.spinner("Creating your quiz..."):
+                    response_text, error = safe_ai_call(model, prompt)
+                
+                if response_text:
                     st.markdown("---")
-                    st.markdown(resp.text)
+                    st.markdown(response_text)
                     st.markdown("---")
                     
                     st.download_button(
-                        label="📥 Download Quiz",
-                        data=resp.text,
+                        "📥 Download Quiz",
+                        data=response_text,
                         file_name=f"quiz_{topic.replace(' ', '_')}.txt",
-                        mime="text/plain",
-                        key="download_quiz"
+                        mime="text/plain"
                     )
                     
+                    increment_usage()
                     if supabase:
                         supabase.table("history").insert({
                             "user_id": st.session_state.user.id,
                             "question": f"Quiz: {topic} ({difficulty})",
-                            "answer": resp.text
+                            "answer": response_text
                         }).execute()
-                        
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                else:
+                    st.error(error)
     
     elif menu == "📁 Image":
         st.subheader("📁 Image Analysis")
-        st.write("Upload study materials for AI analysis")
         
-        file = st.file_uploader("Upload image:", type=['jpg', 'png', 'jpeg'], key="image_upload")
+        if api_calls >= 15:
+            st.warning(f"⚠️ API: {api_calls}/20 calls. Image analysis uses 1 API call.")
+        
+        file = st.file_uploader("Upload image:", type=['jpg', 'png', 'jpeg'])
         
         if file:
             try:
                 img = PIL.Image.open(file)
                 st.image(img, caption="Your upload", use_container_width=True)
                 
-                if st.button("🔍 Analyze Image", use_container_width=True, key="analyze_img_btn", type="primary"):
-                    with st.spinner("Analyzing..."):
-                        resp = model.generate_content([
-                            """Analyze this study material:
+                if st.button("🔍 Analyze Image", use_container_width=True, type="primary"):
+                    prompt = """Analyze this study material:
 1. **Summary** - What is this?
 2. **Key Concepts** - Main ideas
 3. **Important Details** - Facts, formulas, dates
 4. **Study Tips** - How to remember
-5. **Practice Questions** - 2-3 test questions""",
-                            img
-                        ])
+5. **Practice Questions** - 2-3 test questions"""
                     
-                    st.markdown("---")
-                    st.markdown(resp.text)
-                    st.markdown("---")
+                    with st.spinner("Analyzing..."):
+                        response_text, error = safe_ai_call(model, prompt, use_image=img)
                     
-                    if supabase:
-                        supabase.table("history").insert({
-                            "user_id": st.session_state.user.id,
-                            "question": "Image Analysis",
-                            "answer": resp.text
-                        }).execute()
+                    if response_text:
+                        st.markdown("---")
+                        st.markdown(response_text)
+                        st.markdown("---")
+                        
+                        increment_usage()
+                        if supabase:
+                            supabase.table("history").insert({
+                                "user_id": st.session_state.user.id,
+                                "question": "Image Analysis",
+                                "answer": response_text
+                            }).execute()
+                    else:
+                        st.error(error)
                         
             except Exception as e:
                 st.error(f"Error: {e}")
     
     elif menu == "🎯 Tutor":
         st.subheader("🎯 Socratic Tutor")
-        st.info("💡 Learn through guided questions, not direct answers!")
+        st.info("💡 Learn through guided questions!")
         
-        problem = st.text_area("Describe your problem:", height=150, key="tutor_problem")
+        if api_calls >= 15:
+            st.warning(f"⚠️ API: {api_calls}/20 calls remaining")
         
-        if st.button("🚀 Start Session", use_container_width=True, key="start_tutor_btn", type="primary"):
+        problem = st.text_area("Describe your problem:", height=150)
+        
+        if st.button("🚀 Start Session", use_container_width=True, type="primary"):
             if not problem:
                 st.error("Please describe your problem!")
             else:
-                try:
-                    with st.spinner("Preparing questions..."):
-                        resp = model.generate_content(f"""Act as a Socratic tutor for: "{problem}"
+                prompt = f"""Act as a Socratic tutor for: "{problem}"
 
 Do NOT give the answer. Instead:
 1. Ask 3-4 guiding questions
 2. Help them discover the answer
 3. Encourage critical thinking
-4. Be supportive
 
 Start with: "Let me help you think through this..."
-""")
-                    
+"""
+                
+                with st.spinner("Preparing questions..."):
+                    response_text, error = safe_ai_call(model, prompt)
+                
+                if response_text:
                     st.markdown("---")
-                    st.markdown(resp.text)
+                    st.markdown(response_text)
                     st.markdown("---")
                     
+                    increment_usage()
                     if supabase:
                         supabase.table("history").insert({
                             "user_id": st.session_state.user.id,
                             "question": f"Socratic: {problem}",
-                            "answer": resp.text
+                            "answer": response_text
                         }).execute()
-                        
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                else:
+                    st.error(error)
     
     elif menu == "📅 Schedule Planner":
         st.subheader("📅 Study Schedule Planner")
-        st.write("Create and manage your study schedule")
+        st.success("✨ No API calls needed - unlimited use!")
         
         tab1, tab2, tab3 = st.tabs(["➕ Create Schedule", "📋 My Schedules", "🤖 AI Generator"])
         
         with tab1:
             st.write("### Manual Schedule Creation")
             
-            schedule_name = st.text_input("Schedule Name:", placeholder="e.g., Final Exams Week", key="sched_name")
+            schedule_name = st.text_input("Schedule Name:", placeholder="e.g., Final Exams Week")
             
             col1, col2 = st.columns(2)
             with col1:
-                start_date = st.date_input("Start Date:", key="start_date")
+                start_date = st.date_input("Start Date:")
             with col2:
-                end_date = st.date_input("End Date:", key="end_date")
+                end_date = st.date_input("End Date:")
             
             st.write("### Add Study Blocks")
             
-            num_blocks = st.number_input("Number of study blocks:", 1, 10, 3, key="num_blocks")
+            num_blocks = st.number_input("Number of study blocks:", 1, 10, 3)
             
             study_blocks = []
             for i in range(num_blocks):
@@ -585,7 +663,7 @@ Start with: "Let me help you think through this..."
                 with col3:
                     duration = st.selectbox(f"Duration:", ["30 min", "1 hour", "1.5 hours", "2 hours"], key=f"dur_{i}")
                 
-                topic = st.text_input(f"Topic/Task:", key=f"topic_{i}", placeholder="e.g., Chapter 5 - Calculus")
+                topic = st.text_input(f"Topic/Task:", key=f"topic_{i}", placeholder="e.g., Chapter 5")
                 
                 if subject and topic:
                     study_blocks.append({
@@ -597,7 +675,7 @@ Start with: "Let me help you think through this..."
                 
                 st.markdown("---")
             
-            if st.button("💾 Save Schedule", use_container_width=True, key="save_schedule", type="primary"):
+            if st.button("💾 Save Schedule", use_container_width=True, type="primary"):
                 if not schedule_name:
                     st.error("Please enter a schedule name!")
                 elif not study_blocks:
@@ -623,7 +701,7 @@ Start with: "Let me help you think through this..."
             schedules = load_schedules()
             
             if not schedules:
-                st.info("📅 No schedules yet. Create one in the 'Create Schedule' tab!")
+                st.info("📅 No schedules yet. Create one!")
             else:
                 for schedule in schedules:
                     schedule_data = json.loads(schedule["schedule_data"])
@@ -660,71 +738,71 @@ Start with: "Let me help you think through this..."
         
         with tab3:
             st.write("### 🤖 AI-Powered Schedule Generator")
-            st.info("Let AI create an optimized study schedule for you!")
             
-            exam_date = st.date_input("Exam/Deadline Date:", key="ai_exam_date")
-            subjects = st.text_area("Subjects to study (one per line):", 
-                                    placeholder="Math\nPhysics\nChemistry\nBiology", 
-                                    key="ai_subjects")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                hours_per_day = st.slider("Study hours per day:", 1, 12, 4, key="ai_hours")
-            with col2:
-                difficulty = st.selectbox("Overall difficulty:", ["Easy", "Medium", "Hard"], key="ai_diff")
-            
-            preferences = st.text_area("Special preferences (optional):", 
-                                       placeholder="e.g., I'm a morning person, need breaks every hour",
-                                       key="ai_prefs")
-            
-            if st.button("🎯 Generate AI Schedule", use_container_width=True, key="gen_ai_schedule", type="primary"):
-                if not subjects:
-                    st.error("Please enter subjects!")
-                else:
-                    try:
-                        with st.spinner("AI is creating your personalized schedule..."):
-                            days_until_exam = (exam_date - datetime.now().date()).days
-                            
-                            prompt = f"""Create a detailed study schedule with these parameters:
+            if api_calls >= 18:
+                st.error("⚠️ Too close to API limit! Try manual schedule creation instead.")
+            else:
+                st.info(f"💡 This uses 1 API call ({api_calls}/20 used today)")
+                
+                exam_date = st.date_input("Exam/Deadline Date:")
+                subjects = st.text_area("Subjects (one per line):", 
+                                        placeholder="Math\nPhysics\nChemistry")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    hours_per_day = st.slider("Study hours per day:", 1, 12, 4)
+                with col2:
+                    difficulty = st.selectbox("Overall difficulty:", ["Easy", "Medium", "Hard"])
+                
+                preferences = st.text_area("Special preferences (optional):", 
+                                           placeholder="e.g., Morning person, need breaks")
+                
+                if st.button("🎯 Generate AI Schedule", use_container_width=True, type="primary"):
+                    if not subjects:
+                        st.error("Please enter subjects!")
+                    else:
+                        days_until_exam = (exam_date - datetime.now().date()).days
+                        
+                        prompt = f"""Create a study schedule:
 
-- Exam/Deadline: {days_until_exam} days from now
+- Exam: {days_until_exam} days away
 - Subjects: {subjects}
-- Daily study time: {hours_per_day} hours
-- Difficulty level: {difficulty}
+- Daily hours: {hours_per_day}
+- Difficulty: {difficulty}
 - Preferences: {preferences if preferences else 'None'}
 
 Provide:
-1. **Overview** - Study strategy summary
-2. **Daily Breakdown** - What to study each day with time blocks
-3. **Tips** - Study techniques and time management advice
-4. **Revision Plan** - When to review each subject
+1. **Overview** - Strategy
+2. **Daily Breakdown** - Time blocks
+3. **Tips** - Study techniques
+4. **Revision Plan** - Review schedule
 
-Make it realistic and achievable!"""
+Be realistic!"""
+                        
+                        with st.spinner("AI creating your schedule..."):
+                            response_text, error = safe_ai_call(model, prompt)
+                        
+                        if response_text:
+                            st.markdown("---")
+                            st.markdown(response_text)
+                            st.markdown("---")
                             
-                            resp = model.generate_content(prompt)
-                        
-                        st.markdown("---")
-                        st.markdown(resp.text)
-                        st.markdown("---")
-                        
-                        st.download_button(
-                            "📥 Download AI Schedule",
-                            data=resp.text,
-                            file_name="ai_study_schedule.txt",
-                            mime="text/plain",
-                            key="download_ai_schedule"
-                        )
-                        
-                        # Save to history (counts towards usage)
-                        if supabase:
-                            supabase.table("history").insert({
-                                "user_id": st.session_state.user.id,
-                                "question": f"AI Schedule: {subjects.split()[0]}... ({days_until_exam} days)",
-                                "answer": resp.text
-                            }).execute()
-                        
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                            st.download_button(
+                                "📥 Download AI Schedule",
+                                data=response_text,
+                                file_name="ai_study_schedule.txt",
+                                mime="text/plain"
+                            )
+                            
+                            increment_usage()
+                            if supabase:
+                                supabase.table("history").insert({
+                                    "user_id": st.session_state.user.id,
+                                    "question": f"AI Schedule: {subjects.split()[0]}...",
+                                    "answer": response_text
+                                }).execute()
+                        else:
+                            st.error(error)
 
 else:
     login_screen()

@@ -806,3 +806,17 @@ Be realistic!"""
 
 else:
     login_screen()
+   
+    # Add this in the sidebar
+with st.sidebar:
+    st.header("Study Settings")
+    subject = st.selectbox("Choose a Subject", ["General", "Math", "Science", "History", "Coding"])
+    language = st.selectbox("Choose a Language", ["English", "Spanish", "Hindi", "French", "German"])
+
+# Then, update the prompt to include these choices
+if prompt:
+    # We tell the AI what subject and language to use
+    full_prompt = f"Act as a {subject} expert. Respond in {language}. Question: {prompt}"
+    response = model.generate_content(full_prompt)
+    st.markdown(response.text)
+

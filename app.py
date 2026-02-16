@@ -8,7 +8,7 @@ import json
 # --- 1. INITIAL SETUP ---
 st.set_page_config(page_title="Study Master Pro", layout="wide", page_icon="🎓")
 
-# Custom CSS for beautiful UI + Circular Stop Button
+# Custom CSS for beautiful UI + Proper Stop Button
 st.markdown("""
 <style>
     /* Main color scheme */
@@ -36,24 +36,6 @@ st.markdown("""
     .stButton>button:hover {
         transform: translateY(-2px);
         box-shadow: 0 5px 15px rgba(99, 102, 241, 0.3);
-    }
-    
-    /* CIRCULAR STOP BUTTON */
-    .stop-button button {
-        border-radius: 50% !important;
-        width: 45px !important;
-        height: 45px !important;
-        padding: 0 !important;
-        font-size: 20px !important;
-        background-color: #ef4444 !important;
-        border: none !important;
-        box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3) !important;
-    }
-    
-    .stop-button button:hover {
-        background-color: #dc2626 !important;
-        transform: scale(1.1) !important;
-        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.5) !important;
     }
     
     /* Card-like containers */
@@ -478,7 +460,7 @@ if st.session_state.user:
         st.info("💎 Upgrade to Premium for 250/day")
         st.stop()
     
-    # CHAT - FULLY FIXED
+    # CHAT - COMPLETELY FIXED
     if menu == "💬 Chat":
         st.title("💬 AI Study Assistant")
         
@@ -505,35 +487,18 @@ if st.session_state.user:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
         
-        # Chat input area - FIXED
-        if not st.session_state.is_generating:
-            # Normal input when NOT generating
-            prompt = st.chat_input("Type your question...", key="chat_input")
-            
-            if prompt:
-                # Add user message
-                st.session_state.chat_messages.append({"role": "user", "content": prompt})
-                st.session_state.pending_message = prompt
-                st.session_state.is_generating = True
-                st.session_state.stop_generation = False
-                st.rerun()
-        else:
-            # Show disabled input + stop button when generating
-            cols = st.columns([20, 1])
-            with cols[0]:
-                st.chat_input("Generating response...", key="chat_input_disabled", disabled=True)
-            with cols[1]:
-                st.markdown('<div class="stop-button">', unsafe_allow_html=True)
-                if st.button("⏹", key="stop_chat_btn"):
-                    st.session_state.stop_generation = True
-                st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Process generation
+        # Display assistant response if currently generating
         if st.session_state.is_generating and st.session_state.pending_message:
+            # Show user message first
+            with st.chat_message("user"):
+                st.markdown(st.session_state.pending_message)
+            
+            # Generate assistant response
             with st.chat_message("assistant"):
                 message_placeholder = st.empty()
                 full_response = stream_response(st.session_state.pending_message, message_placeholder)
                 
+                st.session_state.chat_messages.append({"role": "user", "content": st.session_state.pending_message})
                 st.session_state.chat_messages.append({"role": "assistant", "content": full_response})
                 
                 if "[⏹️" not in full_response:
@@ -542,8 +507,22 @@ if st.session_state.user:
                 st.session_state.is_generating = False
                 st.session_state.pending_message = None
                 st.rerun()
+        
+        # Chat input - ONLY STOP BUTTON APPEARS DURING GENERATION
+        if st.session_state.is_generating:
+            # Show stop button message
+            st.info("⏹️ Generating response... (refresh to cancel)")
+        else:
+            # Normal chat input
+            prompt = st.chat_input("Type your question...", key="chat_input")
+            
+            if prompt:
+                st.session_state.pending_message = prompt
+                st.session_state.is_generating = True
+                st.session_state.stop_generation = False
+                st.rerun()
     
-    # QUIZ - BUTTON REPLACEMENT FIXED
+    # QUIZ - BUTTON REPLACEMENT
     elif menu == "📝 Quiz":
         st.title("📝 Quiz Generator")
         
@@ -555,7 +534,7 @@ if st.session_state.user:
         with col2:
             num_questions = st.slider("❓ Questions:", 3, 10, 5, key="quiz_num")
         
-        # BUTTON REPLACEMENT - Generate disappears, Stop appears
+        # BUTTON REPLACEMENT - Only one button visible at a time
         if not st.session_state.is_generating:
             # Show GENERATE button
             if st.button("🎯 Generate Quiz", use_container_width=True, key="gen_quiz", type="primary"):
@@ -567,7 +546,7 @@ if st.session_state.user:
                     st.session_state.current_response = ""
                     st.rerun()
         else:
-            # Show STOP button (Generate is hidden)
+            # Show STOP button (Generate is completely hidden)
             if st.button("⏹️ Stop Generating", use_container_width=True, key="stop_quiz_btn", type="secondary"):
                 st.session_state.stop_generation = True
         

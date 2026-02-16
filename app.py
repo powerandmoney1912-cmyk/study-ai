@@ -137,7 +137,7 @@ with st.sidebar:
         "💬 Chat",
         "📝 Quiz Generator", 
         "📅 Schedule Planner",
-        "👨‍🏫 Tutor Mode",
+        "👨‍🏫 Teacher Mode",
         "📸 Image Analysis",
         "🗂️ Flashcards",
         "📊 Dashboard"
@@ -424,39 +424,231 @@ Make it realistic and achievable!"""
         else:
             st.error("Please enter your subjects!")
 
-elif menu == "👨‍🏫 Tutor Mode":
-    st.header("👨‍🏫 Socratic Tutor")
-    st.info("💡 Learn through guided questions - the tutor won't give you direct answers!")
+elif menu == "👨‍🏫 Teacher Mode":
+    st.header("👨‍🏫 Teacher Mode - Get Tested!")
+    st.info("📝 Take tests and get graded! No answers shown until you submit.")
     
-    problem = st.text_area("📝 What problem are you trying to solve?", 
-                          height=150,
-                          placeholder="Describe what you're stuck on...")
+    # Initialize test state
+    if "test_active" not in st.session_state:
+        st.session_state.test_active = False
+    if "test_questions" not in st.session_state:
+        st.session_state.test_questions = []
+    if "test_answers" not in st.session_state:
+        st.session_state.test_answers = {}
+    if "test_submitted" not in st.session_state:
+        st.session_state.test_submitted = False
+    if "test_score" not in st.session_state:
+        st.session_state.test_score = None
     
-    if st.button("🚀 Start Tutoring", use_container_width=True, type="primary"):
-        if problem:
-            prompt = f"""Act as a Socratic tutor helping a student with this problem:
-"{problem}"
+    # Test Setup (if no active test)
+    if not st.session_state.test_active:
+        st.write("### 📚 Create Your Test")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            subject = st.text_input("📖 Subject:", placeholder="e.g., Math, History, Biology")
+        with col2:
+            topic = st.text_input("📌 Topic:", placeholder="e.g., Algebra, World War 2")
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            difficulty = st.selectbox("🎯 Difficulty:", ["Easy", "Medium", "Hard", "Expert"])
+        with col4:
+            num_questions = st.slider("❓ Questions:", 3, 10, 5)
+        
+        if st.button("🎯 Generate Test", use_container_width=True, type="primary"):
+            if subject:
+                prompt = f"""Create a {num_questions}-question multiple choice test about {subject} - {topic} ({difficulty} level).
 
-Your role:
-- Ask 3-4 guiding questions that help them discover the answer
-- DO NOT give the direct answer
-- Help them think critically
-- Be encouraging and supportive
-- Build on their responses
+Format EXACTLY like this:
 
-Start with: "Let me help you think through this step by step..."
-"""
+QUESTION 1
+What is the capital of France?
+A) London
+B) Paris
+C) Berlin
+D) Madrid
+CORRECT_ANSWER: B
+
+QUESTION 2
+[Next question]
+A) [option]
+B) [option]
+C) [option]
+D) [option]
+CORRECT_ANSWER: [letter]
+
+Continue for all {num_questions} questions.
+Make them challenging and educational!"""
+                
+                with st.spinner("👨‍🏫 Teacher is preparing your test..."):
+                    test_content = ask_ai(prompt, include_memory=False)
+                
+                # Parse the test
+                try:
+                    questions = []
+                    lines = test_content.split('\n')
+                    current_q = {}
+                    
+                    for line in lines:
+                        line = line.strip()
+                        
+                        if line.startswith('QUESTION'):
+                            if current_q and 'question' in current_q:
+                                questions.append(current_q)
+                            current_q = {'options': {}, 'number': len(questions) + 1}
+                        elif line and not line.startswith(('A)', 'B)', 'C)', 'D)', 'CORRECT_ANSWER')):
+                            if 'question' not in current_q and len(line) > 5:
+                                current_q['question'] = line
+                        elif line.startswith(('A)', 'B)', 'C)', 'D)')):
+                            option_letter = line[0]
+                            option_text = line[2:].strip()
+                            current_q['options'][option_letter] = option_text
+                        elif 'CORRECT_ANSWER' in line:
+                            answer = line.split(':')[1].strip()
+                            current_q['correct'] = answer
+                    
+                    # Add last question
+                    if current_q and 'question' in current_q:
+                        questions.append(current_q)
+                    
+                    if questions:
+                        st.session_state.test_questions = questions
+                        st.session_state.test_active = True
+                        st.session_state.test_answers = {}
+                        st.session_state.test_submitted = False
+                        st.success("✅ Test generated! Good luck!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to generate test. Try again!")
+                except Exception as e:
+                    st.error(f"Error parsing test: {e}")
+            else:
+                st.error("Please enter a subject!")
+    
+    # Display Active Test
+    elif st.session_state.test_active and not st.session_state.test_submitted:
+        st.write("### 📝 Your Test")
+        st.warning("⚠️ Choose your answers carefully! You can only submit once.")
+        
+        progress = len(st.session_state.test_answers) / len(st.session_state.test_questions)
+        st.progress(progress)
+        st.caption(f"Answered: {len(st.session_state.test_answers)}/{len(st.session_state.test_questions)}")
+        
+        st.markdown("---")
+        
+        # Display all questions
+        for idx, q in enumerate(st.session_state.test_questions):
+            st.write(f"**Question {q['number']}**")
+            st.write(q['question'])
             
-            with st.spinner("🤔 Preparing questions..."):
-                response = ask_ai(prompt, include_memory=False)
+            # Radio buttons for answers
+            answer = st.radio(
+                "Select your answer:",
+                options=list(q['options'].keys()),
+                format_func=lambda x: f"{x}) {q['options'][x]}",
+                key=f"q_{idx}",
+                index=None
+            )
+            
+            if answer:
+                st.session_state.test_answers[idx] = answer
             
             st.markdown("---")
-            st.markdown(response)
-            st.markdown("---")
+        
+        # Submit button
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("📤 Submit Test", use_container_width=True, type="primary"):
+                if len(st.session_state.test_answers) < len(st.session_state.test_questions):
+                    st.error(f"⚠️ Please answer all questions! ({len(st.session_state.test_answers)}/{len(st.session_state.test_questions)} answered)")
+                else:
+                    st.session_state.test_submitted = True
+                    st.rerun()
+    
+    # Show Results
+    elif st.session_state.test_submitted:
+        st.write("### 📊 Test Results")
+        
+        # Calculate score
+        correct = 0
+        total = len(st.session_state.test_questions)
+        
+        for idx, q in enumerate(st.session_state.test_questions):
+            user_answer = st.session_state.test_answers.get(idx)
+            correct_answer = q.get('correct')
             
-            st.info("💬 Continue the conversation in the Chat tab for back-and-forth learning!")
+            if user_answer == correct_answer:
+                correct += 1
+        
+        score_percentage = (correct / total) * 100
+        
+        # Display score with styling
+        st.markdown("---")
+        
+        if score_percentage >= 90:
+            st.success(f"🌟 **EXCELLENT!** {correct}/{total} ({score_percentage:.0f}%)")
+            st.balloons()
+        elif score_percentage >= 70:
+            st.info(f"✅ **GOOD JOB!** {correct}/{total} ({score_percentage:.0f}%)")
+        elif score_percentage >= 50:
+            st.warning(f"📚 **KEEP PRACTICING!** {correct}/{total} ({score_percentage:.0f}%)")
         else:
-            st.error("Please describe your problem!")
+            st.error(f"💪 **STUDY MORE!** {correct}/{total} ({score_percentage:.0f}%)")
+        
+        st.markdown("---")
+        
+        # Detailed breakdown
+        st.write("### 📋 Detailed Breakdown")
+        
+        for idx, q in enumerate(st.session_state.test_questions):
+            user_answer = st.session_state.test_answers.get(idx)
+            correct_answer = q.get('correct')
+            is_correct = user_answer == correct_answer
+            
+            # Question header with icon
+            if is_correct:
+                st.success(f"✅ Question {q['number']}")
+            else:
+                st.error(f"❌ Question {q['number']}")
+            
+            # Show question
+            st.write(f"**{q['question']}**")
+            
+            # Show all options with highlighting
+            for letter, text in q['options'].items():
+                if letter == correct_answer and letter == user_answer:
+                    st.success(f"✅ {letter}) {text} ← Your answer (CORRECT!)")
+                elif letter == correct_answer:
+                    st.info(f"✓ {letter}) {text} ← Correct answer")
+                elif letter == user_answer:
+                    st.error(f"✗ {letter}) {text} ← Your answer (Wrong)")
+                else:
+                    st.write(f"  {letter}) {text}")
+            
+            st.markdown("---")
+        
+        # Award XP based on score
+        xp_earned = int(correct * 10)  # 10 XP per correct answer
+        
+        try:
+            current_xp = user_data.get('xp', 0)
+            supabase.table("profiles").update({
+                "xp": current_xp + xp_earned
+            }).eq("id", st.session_state.user.id).execute()
+            
+            st.success(f"⭐ You earned {xp_earned} XP!")
+        except:
+            pass
+        
+        # New test button
+        if st.button("🔄 Take Another Test", use_container_width=True, type="primary"):
+            st.session_state.test_active = False
+            st.session_state.test_questions = []
+            st.session_state.test_answers = {}
+            st.session_state.test_submitted = False
+            st.session_state.test_score = None
+            st.rerun()
 
 elif menu == "📸 Image Analysis":
     st.header("📸 Image Analysis Lab")

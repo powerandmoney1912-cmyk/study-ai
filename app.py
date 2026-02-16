@@ -28,82 +28,228 @@ GROQ_API_KEY = "your-groq-key"
 
 # --- 2. AUTH & USERNAME ---
 if "user" not in st.session_state:
-    st.title("🛡️ Study Master Infinity")
+    # Login/Signup Screen
+    st.title("🎓 Study Master Infinity")
     st.subheader("⚡ Powered by Groq - Ultra Fast AI")
     
-    t1, t2 = st.tabs(["🔑 Login", "✨ Sign Up"])
+    # Feature showcase
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info("💬 **Smart Chat**\nAI remembers context")
+    with col2:
+        st.info("👨‍🏫 **Teacher Mode**\nGet tested & graded")
+    with col3:
+        st.info("📊 **Track Progress**\nEarn XP & level up")
     
+    st.markdown("---")
+    
+    t1, t2 = st.tabs(["🔑 Login", "✨ Create Account"])
+    
+    # LOGIN TAB
     with t1:
-        e = st.text_input("Email", key="login_email")
-        p = st.text_input("Password", type="password", key="login_pass")
-        if st.button("🚀 Log In", use_container_width=True, type="primary"):
-            if e and p:
-                try:
-                    res = supabase.auth.sign_in_with_password({"email": e, "password": p})
-                    st.session_state.user = res.user
-                    st.success("✅ Login successful!")
-                    time.sleep(0.5)
-                    st.rerun()
-                except Exception as err:
-                    st.error(f"❌ Login failed: {err}")
-            else:
-                st.error("Enter email and password")
-    
-    with t2:
-        ne = st.text_input("Email", key="signup_email")
-        np = st.text_input("Password (min 6 chars)", type="password", key="signup_pass")
-        confirm_p = st.text_input("Confirm Password", type="password", key="signup_confirm")
+        st.write("### Welcome Back!")
         
-        if st.button("🎉 Create Account", use_container_width=True, type="primary"):
-            if ne and np and confirm_p:
-                if np != confirm_p:
-                    st.error("❌ Passwords don't match!")
-                elif len(np) < 6:
-                    st.error("❌ Password too short!")
-                else:
+        login_email = st.text_input("📧 Email", key="login_email", placeholder="your@email.com")
+        login_pass = st.text_input("🔒 Password", type="password", key="login_pass", placeholder="Enter your password")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if st.button("🚀 Log In", use_container_width=True, type="primary", key="login_btn"):
+                if login_email and login_pass:
                     try:
-                        supabase.auth.sign_up({"email": ne, "password": np})
-                        st.success("✅ Account created! Check email to verify.")
-                        st.balloons()
+                        with st.spinner("🔐 Logging in..."):
+                            res = supabase.auth.sign_in_with_password({
+                                "email": login_email, 
+                                "password": login_pass
+                            })
+                            st.session_state.user = res.user
+                            st.success("✅ Login successful!")
+                            st.balloons()
+                            time.sleep(0.5)
+                            st.rerun()
                     except Exception as err:
-                        st.error(f"❌ Error: {err}")
+                        error_msg = str(err)
+                        if "Invalid login credentials" in error_msg:
+                            st.error("❌ Invalid email or password!")
+                        elif "Email not confirmed" in error_msg:
+                            st.error("❌ Please verify your email first!")
+                        else:
+                            st.error(f"❌ Login failed: {error_msg}")
+                else:
+                    st.warning("⚠️ Please enter both email and password")
+        
+        with col2:
+            st.write("")  # Spacing
+    
+    # SIGNUP TAB
+    with t2:
+        st.write("### Create Your Free Account")
+        st.info("🎁 Join now and start learning with AI!")
+        
+        signup_email = st.text_input("📧 Email Address", key="signup_email", placeholder="your@email.com")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            signup_pass = st.text_input("🔒 Password", type="password", key="signup_pass", placeholder="Min 6 characters")
+        with col2:
+            confirm_pass = st.text_input("🔒 Confirm Password", type="password", key="signup_confirm", placeholder="Re-enter password")
+        
+        # Terms checkbox
+        agree_terms = st.checkbox("I agree to the Terms of Service and Privacy Policy", key="agree_terms")
+        
+        if st.button("🎉 Create Account", use_container_width=True, type="primary", key="signup_btn"):
+            # Validation
+            if not signup_email:
+                st.error("❌ Please enter your email address")
+            elif not signup_pass:
+                st.error("❌ Please enter a password")
+            elif len(signup_pass) < 6:
+                st.error("❌ Password must be at least 6 characters long")
+            elif signup_pass != confirm_pass:
+                st.error("❌ Passwords don't match!")
+            elif not agree_terms:
+                st.error("❌ Please accept the Terms of Service")
             else:
-                st.error("Fill all fields")
+                try:
+                    with st.spinner("🎨 Creating your account..."):
+                        res = supabase.auth.sign_up({
+                            "email": signup_email, 
+                            "password": signup_pass
+                        })
+                        
+                        if res.user:
+                            st.success("✅ Account created successfully!")
+                            st.info("📧 Please check your email to verify your account")
+                            st.balloons()
+                            
+                            # Auto-login if email confirmation not required
+                            if res.user.email_confirmed_at:
+                                st.session_state.user = res.user
+                                st.success("🎉 You're now logged in!")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.warning("⚠️ Please verify your email, then login above")
+                        else:
+                            st.error("❌ Account creation failed. Please try again.")
+                            
+                except Exception as err:
+                    error_msg = str(err)
+                    if "already registered" in error_msg.lower() or "already exists" in error_msg.lower():
+                        st.error("❌ This email is already registered! Please login instead.")
+                    elif "invalid email" in error_msg.lower():
+                        st.error("❌ Invalid email address format!")
+                    else:
+                        st.error(f"❌ Signup error: {error_msg}")
+    
+    st.markdown("---")
+    st.caption("🔐 Your data is encrypted and secure")
     st.stop()
 
-# Check/Create Profile
+# Check/Create Profile with Username
 try:
     profile_res = supabase.table("profiles").select("*").eq("id", st.session_state.user.id).execute()
     
     if not profile_res.data:
-        st.title("👋 Welcome! Set Up Your Profile")
-        u_name = st.text_input("Choose a Username", placeholder="e.g., StudyNinja")
-        if st.button("💾 Save Profile", type="primary"):
-            if u_name:
-                supabase.table("profiles").insert({
-                    "id": st.session_state.user.id,
-                    "username": u_name,
-                    "xp": 0,
-                    "is_premium": False,
-                    "created_at": datetime.now().isoformat()
-                }).execute()
-                st.success("Profile created!")
-                st.rerun()
+        # Username Setup Screen
+        st.title("🎨 Complete Your Profile")
+        st.write("### Choose Your Username")
+        st.info("💡 This is how you'll appear in the app. Choose wisely!")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            username_input = st.text_input(
+                "👤 Username", 
+                placeholder="e.g., StudyNinja, MathWizard, BrainMaster",
+                max_chars=20,
+                key="username_setup"
+            )
+            
+            # Username validation
+            if username_input:
+                if len(username_input) < 3:
+                    st.warning("⚠️ Username must be at least 3 characters")
+                elif len(username_input) > 20:
+                    st.warning("⚠️ Username too long (max 20 characters)")
+                elif not username_input.replace('_', '').replace('-', '').isalnum():
+                    st.warning("⚠️ Username can only contain letters, numbers, _ and -")
+                else:
+                    st.success("✅ Username looks good!")
+        
+        with col2:
+            st.write("")  # Spacing
+        
+        # Avatar selection (optional)
+        st.write("### Pick Your Avatar (Optional)")
+        avatar_options = ["🎓", "📚", "🧠", "⚡", "🌟", "🚀", "💎", "🔥", "👑", "🎯"]
+        selected_avatar = st.selectbox("Choose an emoji:", avatar_options, key="avatar_select")
+        
+        st.markdown("---")
+        
+        if st.button("💾 Create Profile", use_container_width=True, type="primary"):
+            if not username_input:
+                st.error("❌ Please enter a username")
+            elif len(username_input) < 3:
+                st.error("❌ Username must be at least 3 characters")
+            elif len(username_input) > 20:
+                st.error("❌ Username too long (max 20 characters)")
+            elif not username_input.replace('_', '').replace('-', '').isalnum():
+                st.error("❌ Username can only contain letters, numbers, _ and -")
             else:
-                st.error("Enter a username")
+                try:
+                    # Check if username already exists
+                    existing = supabase.table("profiles").select("username").eq("username", username_input).execute()
+                    
+                    if existing.data:
+                        st.error("❌ Username already taken! Please choose another.")
+                    else:
+                        # Create profile
+                        supabase.table("profiles").insert({
+                            "id": st.session_state.user.id,
+                            "username": username_input,
+                            "avatar": selected_avatar,
+                            "xp": 0,
+                            "is_premium": False,
+                            "created_at": datetime.now().isoformat()
+                        }).execute()
+                        
+                        st.success(f"✅ Welcome, {username_input}! 🎉")
+                        st.balloons()
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error creating profile: {e}")
+        
+        st.markdown("---")
+        st.caption("🎯 You can change your username later in settings")
         st.stop()
     
     user_data = profile_res.data[0]
 except Exception as e:
-    st.error(f"Profile error: {e}")
-    user_data = {"username": "User", "xp": 0, "is_premium": False}
+    st.error(f"❌ Profile error: {e}")
+    user_data = {"username": "User", "avatar": "🎓", "xp": 0, "is_premium": False}
 
 # --- 3. SIDEBAR ---
 with st.sidebar:
-    st.title(f"👤 {user_data.get('username', 'User')}")
-    level = user_data.get('xp', 0) // 100 + 1
-    st.write(f"📊 Level: {level}")
-    st.progress(min((user_data.get('xp', 0) % 100) / 100, 1.0))
+    # User header with avatar
+    avatar = user_data.get('avatar', '🎓')
+    username = user_data.get('username', 'User')
+    
+    st.markdown(f"# {avatar} {username}")
+    
+    # Level and XP
+    xp = user_data.get('xp', 0)
+    level = xp // 100 + 1
+    xp_in_level = xp % 100
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("📊 Level", level)
+    with col2:
+        st.metric("⭐ XP", xp)
+    
+    st.progress(xp_in_level / 100)
+    st.caption(f"{xp_in_level}/100 XP to Level {level + 1}")
     
     st.markdown("---")
     

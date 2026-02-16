@@ -2,136 +2,105 @@ import streamlit as st
 from groq import Groq
 from supabase import create_client, Client
 from datetime import datetime, timedelta
-import uuid
 import time
-import pandas as pd
 
-# --- 1. CONFIG ---
-st.set_page_config(page_title="Study Master Pro", layout="wide", page_icon="🎓")
+# --- 1. INITIAL SETUP ---
+st.set_page_config(page_title="Study Master Ultra", layout="wide")
 
 try:
+    # Use your Supabase URL and ANON KEY from secrets
     supabase: Client = create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
     groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except:
-    st.error("API Keys missing in Secrets!")
+    st.error("Setup Error: Check your Secrets!")
     st.stop()
 
-# --- 2. SESSION STATE ---
-if "user_uuid" not in st.session_state: st.session_state.user_uuid = str(uuid.uuid4())
-if "is_premium" not in st.session_state: st.session_state.is_premium = False
-if "xp" not in st.session_state: st.session_state.xp = 0
-if "timer_active" not in st.session_state: st.session_state.timer_active = False
-
-# --- 3. PROFESSIONAL SIDEBAR ---
-with st.sidebar:
-    st.title("🛡️ Study Master Pro")
+# --- 2. AUTHENTICATION SYSTEM ---
+def login_ui():
+    st.title("🔐 Study Master Login")
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
     
-    # Premium Key
-    if not st.session_state.is_premium:
-        p_code = st.text_input("Premium Code", type="password")
-        if st.button("Unlock"):
-            if p_code == "STUDY777":
-                st.session_state.is_premium = True
+    with tab1:
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_pass")
+        if st.button("Login"):
+            try:
+                res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                st.session_state.user = res.user
                 st.rerun()
-    else:
-        st.success("💎 PREMIUM ACTIVE")
+            except Exception as e: st.error(f"Login Failed: {e}")
+        
+        st.divider()
+        if st.button("🌐 Sign in with Google (Demo Mode)"):
+            st.info("To enable real Google Sign-in, configure 'Auth Providers' in Supabase Dashboard.")
 
-    menu = st.radio("Go to:", [
-        "💬 Super Chat", 
-        "📝 Notes Maker", 
-        "🗂️ Flashcard Lab", 
-        "📷 Visual Lab", 
-        "📅 AI Scheduler",
-        "📊 Dashboard"
-    ])
-    
-    st.divider()
-    lang = st.selectbox("🌍 Language", ["English", "Tamil (தமிழ்)", "Hindi"])
-    
-    # Live Timer
-    if st.session_state.timer_active:
-        rem = st.session_state.timer_end - datetime.now()
-        if rem.total_seconds() > 0:
-            st.warning(f"Focusing: {str(rem).split('.')[0]}")
-            time.sleep(1); st.rerun()
-        else:
-            st.success("Session Done! 🎉"); st.session_state.timer_active = False
-    else:
-        mins = st.number_input("Minutes", 1, 180, 25)
-        if st.button("🚀 Start Focus"):
-            st.session_state.timer_active = True
-            st.session_state.timer_end = datetime.now() + timedelta(minutes=mins)
+    with tab2:
+        new_email = st.text_input("New Email")
+        new_pass = st.text_input("New Password", type="password")
+        if st.button("Create Account"):
+            try:
+                supabase.auth.sign_up({"email": new_email, "password": new_pass})
+                st.success("Account created! Check your email for verification.")
+            except Exception as e: st.error(f"Sign Up Failed: {e}")
+
+# --- 3. MAIN APP LOGIC ---
+if "user" not in st.session_state:
+    login_ui()
+else:
+    # --- LOAD CHAT HISTORY FROM DATABASE ---
+    if "messages" not in st.session_state:
+        res = supabase.table("history").select("*").eq("user_id", st.session_state.user.id).order("created_at").execute()
+        st.session_state.messages = [{"role": r["role"], "content": r["content"]} for r in res.data]
+
+    # --- SIDEBAR ---
+    with st.sidebar:
+        st.write(f"Logged in as: **{st.session_state.user.email}**")
+        if st.button("🚪 Logout"):
+            supabase.auth.sign_out()
+            del st.session_state.user
             st.rerun()
+        
+        st.divider()
+        menu = st.radio("Navigation", ["💬 Chat History", "👨‍🏫 Teacher Mode", "📝 Notes Maker", "📊 Dashboard"])
+        lang = st.selectbox("Language", ["English", "Tamil (தமிழ்)"])
 
-# --- 4. AI ENGINE ---
-def ask_ai(prompt, system="Expert Study Tutor"):
-    t_lang = "Tamil" if "Tamil" in lang else lang
-    full_sys = f"{system}. Respond ONLY in {t_lang} using Markdown."
-    try:
+    # AI HELPER
+    def ask_ai(prompt, system="Expert Tutor"):
+        t_lang = "Tamil" if "Tamil" in lang else "English"
         resp = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": full_sys}, {"role": "user", "content": prompt}]
+            messages=[{"role": "system", "content": f"{system}. Respond in {t_lang}"}, {"role": "user", "content": prompt}]
         )
         return resp.choices[0].message.content
-    except Exception as e: return f"Error: {e}"
 
-# --- 5. FEATURE MODULES ---
+    # --- 4. FEATURE MODULES ---
+    if menu == "💬 Chat History":
+        st.header("Your Chat History")
+        # Display existing messages
+        for m in st.session_state.messages:
+            with st.chat_message(m["role"]): st.write(m["content"])
+        
+        if p := st.chat_input("Ask a study question..."):
+            with st.chat_message("user"): st.write(p)
+            ans = ask_ai(p)
+            with st.chat_message("assistant"): st.write(ans)
+            
+            # Save to Database
+            supabase.table("history").insert({"user_id": st.session_state.user.id, "role": "user", "content": p}).execute()
+            supabase.table("history").insert({"user_id": st.session_state.user.id, "role": "assistant", "content": ans}).execute()
+            st.session_state.messages.append({"role": "user", "content": p})
+            st.session_state.messages.append({"role": "assistant", "content": ans})
 
-# A. NOTES MAKER (NEW FEATURE)
-if menu == "📝 Notes Maker":
-    st.header("📝 Professional Notes Maker")
-    topic = st.text_input("Enter Topic for Notes")
-    raw_text = st.text_area("Paste raw content or key points here...")
-    if st.button("✨ Generate Structured Notes"):
-        with st.spinner("Organizing..."):
-            notes = ask_ai(f"Convert this raw text into structured study notes with headings and bullets: {raw_text} for topic {topic}")
-            st.markdown(notes)
-            st.session_state.xp += 20
+    elif menu == "👨‍🏫 Teacher Mode":
+        st.header("👨‍🏫 Teacher Assessment")
+        topic = st.text_input("Test Topic")
+        if st.button("Generate Test"):
+            test_q = ask_ai(f"Give 3 questions about {topic}")
+            st.info(test_q)
+            # Store in DB so it doesn't vanish
+            supabase.table("history").insert({"user_id": st.session_state.user.id, "role": "teacher", "content": f"Topic: {topic}"}).execute()
 
-# B. FLASHCARD LAB (RESTORED)
-elif menu == "🗂️ Flashcard Lab":
-    st.header("🗂️ Smart Flashcards")
-    subject = st.text_input("Subject")
-    if st.button("Generate 5 Flashcards"):
-        cards = ask_ai(f"Create 5 Q&A flashcards for {subject}. Format as: Q: [Question] | A: [Answer]")
-        st.info(cards)
-        st.session_state.xp += 15
-
-# C. VISUAL LAB (FIXED CAMERA LOGIC)
-elif menu == "📷 Visual Lab":
-    st.header("📷 Visual Analyzer")
-    img = st.camera_input("Take a photo of your notes/book")
-    if img is not None:
-        st.success("Image Captured!")
-        # THE FIX: Button is placed here so it's always available when image exists
-        if st.button("🔍 Explain This Image Content", use_container_width=True):
-            with st.spinner("AI analyzing visual context..."):
-                # Simulation of visual context via prompt engineering
-                analysis = ask_ai("Analyze the captured study material and explain the core concepts.")
-                st.markdown(analysis)
-                st.session_state.xp += 25
-
-# D. DASHBOARD (RESTORED)
-elif menu == "📊 Dashboard":
-    st.header("📊 Study Analytics")
-    col1, col2 = st.columns(2)
-    col1.metric("Current XP", st.session_state.xp)
-    col2.metric("Level", (st.session_state.xp // 100) + 1)
-    
-    st.subheader("Activity Progress")
-    # Simple Progress tracking
-    st.progress(min((st.session_state.xp % 100) / 100, 1.0))
-    st.write("Keep studying to reach the next level!")
-
-# E. SCHEDULER & CHAT
-elif menu == "📅 AI Scheduler":
-    st.header("📅 Timetable Generator")
-    subs = st.text_area("List Subjects")
-    if st.button("Build Schedule"):
-        st.markdown(ask_ai(f"Create an hourly study table for: {subs}"))
-
-elif menu == "💬 Super Chat":
-    st.header("Chat with AI")
-    if p := st.chat_input("Ask a question..."):
-        ans = ask_ai(p)
-        st.write(ans)
+    elif menu == "📊 Dashboard":
+        st.header("Your Study Stats")
+        res = supabase.table("history").select("*", count="exact").eq("user_id", st.session_state.user.id).execute()
+        st.metric("Total Interactions", res.count)

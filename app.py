@@ -3,7 +3,15 @@ import streamlit as st
 import google.generativeai as genai
 from supabase import create_client, Client
 from datetime import datetime, timedelta
-import PyPDF2
+# Handle both old and new PyPDF2 versions
+try:
+    from PyPDF2 import PdfReader
+except ImportError:
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        import PyPDF2
+        PdfReader = PyPDF2.PdfReader
 from PIL import Image
 import json
 
@@ -254,7 +262,7 @@ def summarize_pdf(pdf_file):
         st.session_state.is_generating = True
         st.session_state.stop_generation = False
         
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        pdf_reader = PdfReader(pdf_file)
         text = "".join([page.extract_text() for page in pdf_reader.pages])
         
         if st.session_state.is_premium:

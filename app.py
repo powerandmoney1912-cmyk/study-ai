@@ -217,45 +217,72 @@ if menu == "💬 Chat":
     st.header("💬 AI Study Chat")
     st.caption("⚡ Lightning-fast responses with Groq")
     
+    # Initialize chat messages in session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+        # Load history from database
+        try:
+            hist = supabase.table("history").select("*").eq(
+                "user_id", st.session_state.user.id
+            ).order("created_at").execute()
+            
+            if hist.data:
+                st.session_state.messages = [
+                    {"role": m.get("role", "assistant"), "content": m.get("content", "")}
+                    for m in hist.data
+                ]
+        except:
+            st.session_state.messages = []
+    
     # Chat controls
     col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.write("💡 Ask anything about your studies!")
     with col2:
-        if st.button("📜 Load History"):
-            st.success("History loaded!")
-            st.rerun()
+        if st.button("🔄 Reload", key="reload_chat"):
+            try:
+                hist = supabase.table("history").select("*").eq(
+                    "user_id", st.session_state.user.id
+                ).order("created_at").execute()
+                
+                st.session_state.messages = [
+                    {"role": m.get("role", "assistant"), "content": m.get("content", "")}
+                    for m in hist.data
+                ]
+                st.success("✅ Reloaded!")
+                time.sleep(0.5)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Reload failed: {e}")
+    
     with col3:
-        if st.button("🗑️ Clear Chat"):
+        if st.button("🗑️ Clear", key="clear_chat"):
             try:
                 supabase.table("history").delete().eq("user_id", st.session_state.user.id).execute()
-                st.success("Chat cleared!")
+                st.session_state.messages = []
+                st.success("✅ Cleared!")
+                time.sleep(0.5)
                 st.rerun()
-            except:
-                st.error("Clear failed")
+            except Exception as e:
+                st.error(f"Clear failed: {e}")
     
     st.markdown("---")
     
-    # Display chat history
-    try:
-        hist = supabase.table("history").select("*").eq(
-            "user_id", st.session_state.user.id
-        ).order("created_at").execute()
-        
-        for m in hist.data:
-            role = m.get("role", "assistant")
-            content = m.get("content", "")
-            
-            with st.chat_message(role):
-                st.write(content)
-    except Exception as e:
-        st.info("No chat history yet. Start chatting below!")
+    # Display all messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
     
     # Chat input
-    if prompt := st.chat_input("Ask me anything..."):
-        # Show user message
+    if prompt := st.chat_input("Type your question here..."):
+        # Add user message to chat
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Display user message
         with st.chat_message("user"):
             st.write(prompt)
         
-        # Save user message
+        # Save user message to database
         try:
             supabase.table("history").insert({
                 "user_id": st.session_state.user.id,
@@ -263,18 +290,24 @@ if menu == "💬 Chat":
                 "content": prompt,
                 "created_at": datetime.now().isoformat()
             }).execute()
-        except:
-            pass
+        except Exception as e:
+            st.error(f"Failed to save: {e}")
         
         # Get AI response
         with st.spinner("🤔 Thinking..."):
-            answer = ask_ai(prompt, include_memory=True)
+            try:
+                answer = ask_ai(prompt, include_memory=True)
+            except Exception as e:
+                answer = f"⚠️ Error: {str(e)}"
         
-        # Show AI response
+        # Add assistant response to chat
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+        
+        # Display assistant response
         with st.chat_message("assistant"):
             st.write(answer)
         
-        # Save AI response
+        # Save AI response to database and award XP
         try:
             supabase.table("history").insert({
                 "user_id": st.session_state.user.id,
@@ -283,14 +316,15 @@ if menu == "💬 Chat":
                 "created_at": datetime.now().isoformat()
             }).execute()
             
-            # Award XP
+            # Award XP (5 points per message)
             current_xp = user_data.get('xp', 0)
             supabase.table("profiles").update({
                 "xp": current_xp + 5
             }).eq("id", st.session_state.user.id).execute()
-        except:
-            pass
+        except Exception as e:
+            pass  # Silently fail on XP/save errors
         
+        # Rerun to update the display
         st.rerun()
 
 elif menu == "📝 Quiz Generator":

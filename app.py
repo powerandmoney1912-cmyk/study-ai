@@ -45,7 +45,7 @@ def save_to_db(role, content, type="text"):
 st.sidebar.title("🎓 Study Master Pro")
 if not st.session_state.is_premium:
     code = st.sidebar.text_input("Premium Code", type="password")
-    if st.sidebar.button("Redeem") and code == "STUDY777":
+    if st.sidebar.button("Redeem") and code == "NOVEMBER27":
         st.session_state.is_premium = True
         st.rerun()
 
@@ -135,3 +135,4 @@ elif menu == "Teacher Mode":
     if topic and st.button("Get Test"):
         test = ask_ai(f"Give 5 questions about {topic}. No answers.")
         st.write(test)
+

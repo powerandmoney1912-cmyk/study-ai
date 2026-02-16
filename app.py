@@ -1,693 +1,730 @@
-# Supabase version - Updated Feb 2025 - BUTTON STATE FIX
 import streamlit as st
-import google.generativeai as genai
 from supabase import create_client, Client
-from datetime import datetime, timedelta
-# Handle both old and new PyPDF2 versions
-try:
-    from PyPDF2 import PdfReader
-except ImportError:
-    try:
-        from pypdf import PdfReader
-    except ImportError:
-        import PyPDF2
-        PdfReader = PyPDF2.PdfReader
-from PIL import Image
+from datetime import datetime, timedelta, time
+import PIL.Image
+import os
 import json
 
-# Page Configuration
-st.set_page_config(page_title="AI Study Assistant", page_icon="🎓", layout="wide")
+# --- 1. INITIAL SETUP ---
+st.set_page_config(page_title="Study Master Pro", layout="centered", page_icon="🎓")
 
-# Initialize Supabase
+# --- 2. SUPABASE INIT ---
 @st.cache_resource
-def init_supabase():
+def initialize_supabase():
     try:
-        supabase_url = st.secrets["SUPABASE_URL"]
-        supabase_key = st.secrets["SUPABASE_KEY"]
-        return create_client(supabase_url, supabase_key)
+        url = st.secrets["supabase"]["url"]
+        key = st.secrets["supabase"]["key"]
+        return create_client(url, key)
     except Exception as e:
-        st.error(f"Supabase initialization error: {str(e)}")
-        st.info("Please check your Supabase credentials in secrets")
-        st.stop()
+        st.error(f"Supabase failed: {e}")
+        return None
 
-supabase: Client = init_supabase()
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-# PREMIUM CODES WITH EXPIRY
-PREMIUM_CODES = {
-    "PREMIUM2024": {"description": "Valid until Dec 2024", "days": 365},
-    "STUDENT100": {"description": "Student Special Access", "days": 365},
-    "TEACHER50": {"description": "Teacher Premium", "days": 365},
-    "LIFETIME": {"description": "Lifetime Premium Access", "days": 36500},
-    "Aarya": {"description": "1 Day Premium", "days": 1},
-    "Manu Aarya": {"description": "27 Days Premium", "days": 27}
-}
-
-# Initialize session state
-if 'user' not in st.session_state:
-    st.session_state.user = None
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'study_mode' not in st.session_state:
-    st.session_state.study_mode = "AI Chat"
-if 'is_premium' not in st.session_state:
-    st.session_state.is_premium = False
-if 'premium_expires' not in st.session_state:
-    st.session_state.premium_expires = None
-# FIXED: Added state for generation tracking
-if 'is_generating' not in st.session_state:
-    st.session_state.is_generating = False
-if 'stop_generation' not in st.session_state:
-    st.session_state.stop_generation = False
-
-# NCERT Configuration
-NCERT_SUBJECTS = {
-    "Mathematics": ["Algebra", "Geometry", "Trigonometry", "Calculus", "Statistics", "Probability"],
-    "Science": ["Physics", "Chemistry", "Biology", "Environmental Science"],
-    "Social Science": ["History", "Geography", "Political Science", "Economics"],
-    "English": ["Grammar", "Literature", "Writing", "Comprehension"],
-    "Tamil": ["Grammar", "Literature", "Poetry", "Prose"],
-    "Hindi": ["Grammar", "Literature", "Poetry", "Prose"],
-    "Marathi": ["Grammar", "Literature", "Poetry", "Prose"]
-}
-DIFFICULTY_LEVELS = ["Easy", "Medium", "Hard", "Expert"]
-NCERT_CLASSES = ["Class 6", "Class 7", "Class 8", "Class 9", "Class 10", "Class 11", "Class 12"]
-
-# Custom CSS
-st.markdown("""<style>
-    .stButton>button {width: 100%; background-color: #4CAF50; color: white; font-weight: bold;}
-    .premium-badge {
-        background: linear-gradient(45deg, #FFD700, #FFA500);
-        color: #000;
-        padding: 5px 15px;
-        border-radius: 20px;
-        font-weight: bold;
-        display: inline-block;
-        margin: 10px 0;
-    }
-    .chat-message {padding: 1.5rem; border-radius: 0.5rem; margin-bottom: 1rem;}
-    .user-message {background-color: #e3f2fd; border-left: 5px solid #2196F3;}
-    .ai-message {background-color: #f1f8e9; border-left: 5px solid #4CAF50;}
-</style>""", unsafe_allow_html=True)
-
-# Authentication Functions
-def create_account(email, password, name):
+# --- 3. BULLETPROOF GEMINI INIT ---
+@st.cache_resource
+def initialize_gemini():
+    """Auto-detects working model"""
     try:
-        auth_response = supabase.auth.sign_up({
-            "email": email,
-            "password": password,
-            "options": {
-                "data": {
-                    "name": name
-                }
-            }
-        })
+        if "GOOGLE_API_KEY" not in st.secrets:
+            st.error("GOOGLE_API_KEY not in secrets!")
+            return None
         
-        if auth_response.user:
-            supabase.table('users').insert({
-                'id': auth_response.user.id,
-                'name': name,
-                'email': email,
-                'created_at': datetime.now().isoformat(),
-                'total_questions': 0,
-                'is_premium': False,
-                'premium_activated_at': None,
-                'premium_expires_at': None
-            }).execute()
-            
-            return True, "Account created successfully! Please check your email to verify."
-        else:
-            return False, "Account creation failed"
-            
-    except Exception as e:
-        error_msg = str(e)
-        if "User already registered" in error_msg or "already registered" in error_msg:
-            return False, "This email is already registered!"
-        elif "Invalid email" in error_msg:
-            return False, "Invalid email address!"
-        elif "Password should be" in error_msg or "weak" in error_msg.lower():
-            return False, "Password is too weak. Use at least 6 characters!"
-        return False, f"Error: {error_msg}"
-
-def login_user(email, password):
-    try:
-        auth_response = supabase.auth.sign_in_with_password({
-            "email": email,
-            "password": password
-        })
+        api_key = st.secrets["GOOGLE_API_KEY"].strip()
         
-        if auth_response.user:
-            user_id = auth_response.user.id
-            user_data = supabase.table('users').select('*').eq('id', user_id).execute()
-            
-            if user_data.data and len(user_data.data) > 0:
-                user_info = user_data.data[0]
-                is_premium = user_info.get('is_premium', False)
-                premium_expires = user_info.get('premium_expires_at')
-                
-                # Check if premium expired
-                if is_premium and premium_expires:
-                    try:
-                        expiry_date = datetime.fromisoformat(premium_expires)
-                        if datetime.now() > expiry_date:
-                            # Premium expired, update database
-                            supabase.table('users').update({
-                                'is_premium': False
-                            }).eq('id', user_id).execute()
-                            is_premium = False
-                            premium_expires = None
-                    except:
-                        pass
-                
-                st.session_state.user = {
-                    'uid': user_id,
-                    'email': auth_response.user.email,
-                    'name': user_info.get('name', 'User')
-                }
-                st.session_state.is_premium = is_premium
-                st.session_state.premium_expires = premium_expires
-                return True, "Login successful!"
-            else:
-                return False, "User profile not found"
-        else:
-            return False, "Login failed"
-            
-    except Exception as e:
-        error_msg = str(e)
-        if "Invalid login credentials" in error_msg:
-            return False, "Invalid email or password!"
-        return False, f"Login error: {error_msg}"
-
-def activate_premium(code):
-    """Activate premium with code"""
-    if code in PREMIUM_CODES:
+        if not api_key or len(api_key) < 20:
+            st.error("API key invalid!")
+            return None
+        
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        
+        st.info("🔍 Scanning for available AI models...")
+        
         try:
-            code_info = PREMIUM_CODES[code]
-            expiry_date = datetime.now() + timedelta(days=code_info['days'])
+            all_models = genai.list_models()
+            valid_models = [
+                m for m in all_models 
+                if 'generateContent' in m.supported_generation_methods
+            ]
             
-            supabase.table('users').update({
-                'is_premium': True,
-                'premium_activated_at': datetime.now().isoformat(),
-                'premium_expires_at': expiry_date.isoformat(),
-                'premium_code_used': code
-            }).eq('id', st.session_state.user['uid']).execute()
+            if not valid_models:
+                st.error("No compatible models found!")
+                return None
             
-            st.session_state.is_premium = True
-            st.session_state.premium_expires = expiry_date.isoformat()
+            model_names = [m.name for m in valid_models]
+            st.success(f"✅ Found {len(model_names)} models")
             
-            return True, f"✅ Premium Activated! {code_info['description']} - Expires: {expiry_date.strftime('%Y-%m-%d')}"
-        except Exception as e:
-            return False, f"Error: {str(e)}"
-    else:
-        return False, "❌ Invalid premium code!"
-
-# AI Functions
-def get_ai_response(prompt, mode="chat"):
-    """FIXED: Added generation state tracking"""
-    try:
-        st.session_state.is_generating = True
-        st.session_state.stop_generation = False
-        
-        if st.session_state.is_premium:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            model_name = "⚡ Gemini 1.5 Flash"
-        else:
-            model = genai.GenerativeModel('gemini-pro')
-            model_name = "Gemini Pro"
-        
-        prompts = {
-            "chat": "You are an NCERT-aligned AI tutor. Provide clear, detailed educational responses.",
-            "socratic": "You are a Socratic tutor. Ask guiding questions, never give direct answers. Follow NCERT curriculum.",
-            "simplify": "Explain like I'm 5 years old. Use simple words, fun examples. Follow NCERT curriculum.",
-        }
-        full_prompt = f"{prompts.get(mode, prompts['chat'])}\n\n{prompt}"
-        
-        # Check if user cancelled
-        if st.session_state.stop_generation:
-            st.session_state.is_generating = False
-            return "⚠️ Generation cancelled by user."
-        
-        response = model.generate_content(full_prompt)
-        
-        footer = f"\n\n*Powered by {model_name}*" if st.session_state.is_premium else ""
-        st.session_state.is_generating = False
-        return response.text + footer
-    except Exception as e:
-        st.session_state.is_generating = False
-        return f"Sorry, I encountered an error: {str(e)}\n\nPlease try again or check your API key."
-
-def analyze_image(image_file, prompt="Explain this image"):
-    """FIXED: Added generation state tracking"""
-    try:
-        st.session_state.is_generating = True
-        st.session_state.stop_generation = False
-        
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        image = Image.open(image_file)
-        
-        if st.session_state.stop_generation:
-            st.session_state.is_generating = False
-            return "⚠️ Generation cancelled by user."
-        
-        response = model.generate_content([prompt + " Follow NCERT curriculum.", image])
-        st.session_state.is_generating = False
-        return response.text
-    except Exception as e:
-        st.session_state.is_generating = False
-        return f"Image analysis error: {str(e)}"
-
-def summarize_pdf(pdf_file):
-    """FIXED: Added generation state tracking"""
-    try:
-        st.session_state.is_generating = True
-        st.session_state.stop_generation = False
-        
-        pdf_reader = PdfReader(pdf_file)
-        text = "".join([page.extract_text() for page in pdf_reader.pages])
-        
-        if st.session_state.is_premium:
-            prompt = f"Provide 15 detailed key points:\n\n{text[:12000]}"
-        else:
-            prompt = f"Summarize in 10 key points:\n\n{text[:8000]}"
-        
-        if st.session_state.stop_generation:
-            st.session_state.is_generating = False
-            return "⚠️ Generation cancelled by user."
-        
-        result = get_ai_response(prompt)
-        return result
-    except Exception as e:
-        st.session_state.is_generating = False
-        return f"PDF error: {str(e)}"
-
-def generate_quiz(subject, difficulty, class_level, topic=None):
-    """FIXED: Added generation state tracking"""
-    st.session_state.is_generating = True
-    st.session_state.stop_generation = False
-    
-    num_questions = 10 if st.session_state.is_premium else 5
-    
-    prompt = f"""Generate {num_questions} NCERT {class_level} {subject} MCQs ({difficulty} level).
-    {f'Topic: {topic}' if topic else ''}
-    Format:
-    Q1: [Question]
-    A) [Option]
-    B) [Option]
-    C) [Option]
-    D) [Option]
-    Correct: [A/B/C/D]
-    Explanation: [Brief explanation]"""
-    
-    if st.session_state.stop_generation:
-        st.session_state.is_generating = False
-        return []
-    
-    response = get_ai_response(prompt)
-    questions = []
-    lines = response.split('\n')
-    current = {}
-    
-    for line in lines:
-        line = line.strip()
-        if line.startswith('Q'):
-            if current and 'question' in current and 'options' in current and len(current.get('options', {})) > 0:
-                questions.append(current)
-            current = {
-                'question': line.split(':', 1)[1].strip() if ':' in line else line, 
-                'options': {}
-            }
-        elif line.startswith(('A)', 'B)', 'C)', 'D)')):
-            if 'options' in current:
-                current['options'][line[0]] = line[2:].strip()
-        elif line.startswith('Correct:'):
-            current['correct'] = line.split(':')[1].strip()[0]
-        elif line.startswith('Explanation:'):
-            current['explanation'] = line.split(':', 1)[1].strip()
-    
-    if current and 'question' in current and 'options' in current and len(current.get('options', {})) > 0:
-        questions.append(current)
-    
-    st.session_state.is_generating = False
-    return questions
-
-def save_history(user_id, question, answer):
-    try:
-        supabase.table('history').insert({
-            'user_id': user_id,
-            'question': question,
-            'answer': answer,
-            'timestamp': datetime.now().isoformat(),
-            'model_used': 'premium' if st.session_state.is_premium else 'free'
-        }).execute()
-        
-        user_data = supabase.table('users').select('total_questions').eq('id', user_id).execute()
-        if user_data.data:
-            current_count = user_data.data[0].get('total_questions', 0)
-            supabase.table('users').update({
-                'total_questions': current_count + 1
-            }).eq('id', user_id).execute()
-    except Exception as e:
-        pass
-
-# UI Functions
-def show_login():
-    st.title("🎓 AI Study Assistant")
-    st.caption("NCERT-Aligned Learning Platform")
-    
-    tab1, tab2 = st.tabs(["Login", "Sign Up"])
-    
-    with tab1:
-        st.subheader("Welcome Back!")
-        email = st.text_input("Email", key="login_email", placeholder="your@email.com")
-        password = st.text_input("Password", type="password", key="login_pass", placeholder="••••••")
-        
-        if st.button("🚀 Login", key="btn_login", use_container_width=True):
-            if not email or not password:
-                st.warning("Please enter both email and password")
-            else:
-                with st.spinner("Logging in..."):
-                    success, msg = login_user(email, password)
-                    if success:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-    
-    with tab2:
-        st.subheader("Create Account")
-        name = st.text_input("Full Name", key="signup_name", placeholder="Your Name")
-        email = st.text_input("Email", key="signup_email", placeholder="your@email.com")
-        password = st.text_input("Password", type="password", key="signup_pass", placeholder="Min 6 characters")
-        confirm = st.text_input("Confirm Password", type="password", key="signup_confirm", placeholder="Re-enter password")
-        
-        if st.button("✨ Create Account", key="btn_signup", use_container_width=True):
-            if not name or not email or not password:
-                st.warning("Please fill all fields")
-            elif password != confirm:
-                st.error("Passwords don't match!")
-            elif len(password) < 6:
-                st.error("Password must be at least 6 characters!")
-            else:
-                with st.spinner("Creating account..."):
-                    success, msg = create_account(email, password, name)
-                    if success:
-                        st.success(msg)
-                        st.info("✅ Account created! Please login above.")
-                    else:
-                        st.error(msg)
-
-def show_sidebar():
-    with st.sidebar:
-        if st.session_state.is_premium:
-            st.markdown('<div class="premium-badge">👑 PREMIUM USER</div>', unsafe_allow_html=True)
-            if st.session_state.premium_expires:
+            # Try each model
+            for model_info in valid_models:
+                model_name = model_info.name
+                
+                # Try full name
                 try:
-                    expiry_date = datetime.fromisoformat(st.session_state.premium_expires)
-                    days_left = (expiry_date - datetime.now()).days
-                    if days_left > 0:
-                        st.info(f"⏰ Premium expires in {days_left} days")
-                    else:
-                        st.warning("⚠️ Premium expired")
+                    st.info(f"Testing: {model_name}")
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content("Say ready")
+                    if response.text:
+                        st.success(f"🎉 CONNECTED: {model_name}")
+                        return model
                 except:
                     pass
-        
-        st.title(f"👋 {st.session_state.user['name']}")
-        
-        if not st.session_state.is_premium:
-            st.markdown("---")
-            with st.expander("🌟 Upgrade to Premium", expanded=False):
-                st.write("**Benefits:**")
-                st.write("✅ Gemini 1.5 Flash (Faster)")
-                st.write("✅ 10 Quiz Questions")
-                st.write("✅ Detailed Summaries")
-                st.write("")
-                st.write("**Available Codes:**")
-                st.write("• `Aarya` - 1 Day")
-                st.write("• `Manu Aarya` - 27 Days")
                 
-                premium_code = st.text_input("Premium Code", type="password", key="premium_input")
-                if st.button("Activate", key="activate_btn"):
-                    success, msg = activate_premium(premium_code)
-                    if success:
-                        st.success(msg)
-                        st.balloons()
-                        st.rerun()
-                    else:
-                        st.error(msg)
-        
-        st.markdown("---")
-        st.session_state.study_mode = st.selectbox(
-            "📚 Study Mode",
-            ["AI Chat", "Socratic Tutor", "Quiz Generator", "Simplifier", "Multimedia Tools", "Dashboard"]
-        )
-        
-        st.markdown("---")
-        try:
-            user_data = supabase.table('users').select('total_questions').eq('id', st.session_state.user['uid']).execute()
-            if user_data.data:
-                st.metric("Questions", user_data.data[0].get('total_questions', 0))
-        except:
-            pass
-        
-        st.caption("🇮🇳 NCERT Aligned")
-        
-        if st.button("🚪 Logout", use_container_width=True):
-            try:
-                supabase.auth.sign_out()
-            except:
-                pass
-            st.session_state.user = None
-            st.session_state.chat_history = []
-            st.session_state.is_premium = False
-            st.session_state.premium_expires = None
-            st.session_state.is_generating = False
-            st.session_state.stop_generation = False
-            st.rerun()
+                # Try short name
+                try:
+                    short_name = model_name.replace("models/", "")
+                    model = genai.GenerativeModel(short_name)
+                    response = model.generate_content("Say ready")
+                    if response.text:
+                        st.success(f"🎉 CONNECTED: {short_name}")
+                        return model
+                except:
+                    pass
+            
+            st.error("All models failed!")
+            return None
+            
+        except Exception as e:
+            st.error(f"Model list failed: {e}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Fatal error: {e}")
+        return None
 
-def show_chat(mode="chat"):
-    """FIXED: Proper button state management"""
-    titles = {"chat": "💬 AI Chat", "socratic": "🤔 Socratic Tutor", "simplify": "🧒 Simplifier"}
-    st.title(titles.get(mode, "💬 Chat"))
-    
-    if st.session_state.is_premium:
-        st.success("⚡ Using Gemini 1.5 Flash!")
-    
-    # Display chat history
-    for msg in st.session_state.chat_history:
-        css = "user-message" if msg['role'] == 'user' else "ai-message"
-        st.markdown(f'<div class="chat-message {css}"><b>{msg["role"].title()}:</b> {msg["content"]}</div>', 
-                   unsafe_allow_html=True)
-    
-    # FIXED: Show generating indicator while AI is working
-    if st.session_state.is_generating:
-        with st.spinner("🤔 Generating response... (refresh to cancel)"):
-            pass
-    
-    # Chat input - only show when NOT generating
-    if not st.session_state.is_generating:
-        user_input = st.chat_input("Ask anything...")
-        if user_input:
-            st.session_state.chat_history.append({'role': 'user', 'content': user_input})
-            response = get_ai_response(user_input, mode)
-            st.session_state.chat_history.append({'role': 'assistant', 'content': response})
-            save_history(st.session_state.user['uid'], user_input, response)
-            st.rerun()
-    
-    # Clear chat button - only show when NOT generating and history exists
-    if len(st.session_state.chat_history) > 0 and not st.session_state.is_generating:
-        if st.button("🗑️ Clear Chat"):
-            st.session_state.chat_history = []
-            st.rerun()
+# Initialize
+supabase = initialize_supabase()
+model = initialize_gemini()
 
-def show_quiz():
-    """FIXED: Proper button state management for quiz generation"""
-    st.title("📝 NCERT Quiz Generator")
+# --- 4. SESSION STATE ---
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "is_premium" not in st.session_state:
+    st.session_state.is_premium = False
+if "schedules" not in st.session_state:
+    st.session_state.schedules = []
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# --- 5. USAGE TRACKER ---
+def get_daily_usage():
+    """Counts all AI interactions in last 24 hours"""
+    if not supabase or not st.session_state.user:
+        return 0
+    try:
+        time_threshold = (datetime.now() - timedelta(hours=24)).isoformat()
+        res = supabase.table("history").select("id", count="exact").eq(
+            "user_id", st.session_state.user.id
+        ).gte("created_at", time_threshold).execute()
+        return res.count if res.count else 0
+    except:
+        return 0
+
+# --- 6. CHAT HISTORY FUNCTIONS ---
+def load_chat_history():
+    """Load recent chat history from database"""
+    if not supabase or not st.session_state.user:
+        return []
+    try:
+        res = supabase.table("history").select("*").eq(
+            "user_id", st.session_state.user.id
+        ).order("created_at", desc=True).limit(20).execute()
+        
+        if res.data:
+            # Reverse to show oldest first
+            return list(reversed(res.data))
+        return []
+    except:
+        return []
+
+def save_chat_message(question, answer):
+    """Save chat message to database"""
+    if not supabase or not st.session_state.user:
+        return False
+    try:
+        supabase.table("history").insert({
+            "user_id": st.session_state.user.id,
+            "question": question,
+            "answer": answer,
+            "created_at": datetime.now().isoformat()
+        }).execute()
+        return True
+    except:
+        return False
+
+def clear_chat_history():
+    """Clear all chat history for user"""
+    if not supabase or not st.session_state.user:
+        return False
+    try:
+        supabase.table("history").delete().eq(
+            "user_id", st.session_state.user.id
+        ).execute()
+        st.session_state.chat_history = []
+        return True
+    except:
+        return False
+
+# --- 7. SCHEDULE MANAGEMENT FUNCTIONS ---
+def save_schedule(schedule_data):
+    """Save schedule to Supabase"""
+    if not supabase or not st.session_state.user:
+        return False
+    try:
+        supabase.table("schedules").insert({
+            "user_id": st.session_state.user.id,
+            "schedule_name": schedule_data["name"],
+            "schedule_data": json.dumps(schedule_data),
+            "created_at": datetime.now().isoformat()
+        }).execute()
+        return True
+    except Exception as e:
+        st.error(f"Failed to save schedule: {e}")
+        return False
+
+def load_schedules():
+    """Load user's schedules from Supabase"""
+    if not supabase or not st.session_state.user:
+        return []
+    try:
+        res = supabase.table("schedules").select("*").eq(
+            "user_id", st.session_state.user.id
+        ).order("created_at", desc=True).execute()
+        return res.data if res.data else []
+    except:
+        return []
+
+def delete_schedule(schedule_id):
+    """Delete a schedule"""
+    if not supabase:
+        return False
+    try:
+        supabase.table("schedules").delete().eq("id", schedule_id).execute()
+        return True
+    except:
+        return False
+
+# --- 8. IMPROVED LOGIN SCREEN (AUTO-LOGIN AFTER SIGNUP) ---
+def login_screen():
+    st.title("🎓 Study Master Pro")
+    st.subheader("Your AI-Powered Study Companion")
     
-    if st.session_state.is_premium:
-        st.success("👑 Premium: 10 questions per quiz!")
-    else:
-        st.info("Free: 5 questions. Upgrade for 10!")
-    
+    # Show features
     col1, col2, col3 = st.columns(3)
-    
     with col1:
-        subject = st.selectbox("Subject", list(NCERT_SUBJECTS.keys()))
+        st.info("💬 **AI Chat**\nAsk anything!")
     with col2:
-        class_level = st.selectbox("Class", NCERT_CLASSES)
+        st.info("📝 **Quiz Gen**\nCustom quizzes")
     with col3:
-        difficulty = st.selectbox("Difficulty", DIFFICULTY_LEVELS)
+        st.info("📅 **Planner**\nStudy schedules")
     
-    topic = st.selectbox("Topic", ["All Topics"] + NCERT_SUBJECTS[subject])
+    if not supabase:
+        st.error("Connection failed. Check Supabase settings.")
+        return
     
-    # FIXED: Show generate button only when NOT generating
-    if not st.session_state.is_generating:
-        if st.button("🎯 Generate Quiz", use_container_width=True):
-            st.session_state.quiz_data = generate_quiz(
-                subject, difficulty, class_level, 
-                None if topic == "All Topics" else topic
-            )
-            st.session_state.quiz_answers = {}
-            st.rerun()
-    else:
-        # FIXED: Show stop button only while generating
-        st.info("⏳ Generating quiz questions...")
-        if st.button("⛔ Stop Generating", use_container_width=True):
-            st.session_state.stop_generation = True
-            st.session_state.is_generating = False
-            st.rerun()
-    
-    if 'quiz_data' in st.session_state and st.session_state.quiz_data:
-        st.markdown("---")
-        for idx, q in enumerate(st.session_state.quiz_data):
-            st.markdown(f"**Q{idx+1}:** {q['question']}")
-            options = q['options']
-            answer = st.radio("", list(options.keys()), 
-                            format_func=lambda x, opts=options: f"{x}) {opts[x]}", 
-                            key=f"q_{idx}")
-            st.session_state.quiz_answers[idx] = answer
-            st.markdown("---")
-        
-        if st.button("✅ Submit Quiz"):
-            score = sum(1 for idx, q in enumerate(st.session_state.quiz_data) 
-                       if st.session_state.quiz_answers.get(idx) == q['correct'])
-            percentage = (score / len(st.session_state.quiz_data)) * 100
-            
-            for idx, q in enumerate(st.session_state.quiz_data):
-                is_correct = st.session_state.quiz_answers.get(idx) == q['correct']
-                if is_correct:
-                    st.success(f"✅ Q{idx+1}: Correct!")
-                else:
-                    st.error(f"❌ Q{idx+1}: Wrong - Answer: {q['correct']}) {q['options'][q['correct']]}")
-                if 'explanation' in q:
-                    st.caption(f"💡 {q['explanation']}")
-            
-            st.markdown(f"## Score: {score}/{len(st.session_state.quiz_data)} ({percentage:.0f}%)")
-            if percentage >= 80:
-                st.balloons()
-
-def show_multimedia():
-    """FIXED: Proper button state management for multimedia"""
-    st.title("🎨 Multimedia Tools")
-    
-    tab1, tab2 = st.tabs(["📷 Image Analysis", "📄 PDF Summary"])
+    tab1, tab2 = st.tabs(["🔑 Login", "✨ Sign Up"])
     
     with tab1:
-        st.subheader("Upload an Image")
-        uploaded_img = st.file_uploader("Choose an image", type=['png', 'jpg', 'jpeg'], key="img_upload")
+        st.write("### Welcome Back!")
+        email = st.text_input("Email", key="l_email")
+        password = st.text_input("Password", type="password", key="l_pass")
         
-        if uploaded_img:
-            st.image(uploaded_img, width=400, caption="Uploaded Image")
-            
-            prompt_text = st.text_input("What would you like to know about this image?", 
-                                       value="Explain this image in detail", 
-                                       key="img_prompt")
-            
-            # FIXED: Show analyze button only when NOT generating
-            if not st.session_state.is_generating:
-                if st.button("🔍 Analyze Image", key="analyze_img_btn"):
-                    result = analyze_image(uploaded_img, prompt_text)
-                    st.markdown("### Analysis Result:")
-                    st.write(result)
+        if st.button("🚀 Log In", use_container_width=True, type="primary"):
+            if email and password:
+                try:
+                    res = supabase.auth.sign_in_with_password({
+                        "email": email, 
+                        "password": password
+                    })
+                    st.session_state.user = res.user
+                    st.success("✅ Logged in successfully!")
                     st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Login failed: {str(e)}")
             else:
-                st.info("⏳ Analyzing image...")
-                if st.button("⛔ Stop Analysis", key="stop_img_btn"):
-                    st.session_state.stop_generation = True
-                    st.session_state.is_generating = False
-                    st.rerun()
+                st.error("Please enter both email and password")
     
     with tab2:
-        st.subheader("Upload a PDF")
-        uploaded_pdf = st.file_uploader("Choose a PDF file", type=['pdf'], key="pdf_upload")
+        st.write("### Create Your Account")
+        st.info("🎁 Get 50 free AI interactions daily!")
         
-        if uploaded_pdf:
-            st.success(f"✅ File uploaded: {uploaded_pdf.name}")
-            
-            # FIXED: Show summarize button only when NOT generating
-            if not st.session_state.is_generating:
-                if st.button("📝 Summarize PDF", key="summarize_pdf_btn"):
-                    summary = summarize_pdf(uploaded_pdf)
-                    st.markdown("### Summary:")
-                    st.write(summary)
-                    st.rerun()
+        new_email = st.text_input("Email Address", key="s_email", 
+                                   placeholder="student@example.com")
+        new_pass = st.text_input("Password (min 6 characters)", 
+                                  type="password", key="s_pass")
+        confirm_pass = st.text_input("Confirm Password", 
+                                      type="password", key="s_confirm")
+        
+        # Terms checkbox
+        agree = st.checkbox("I agree to the Terms of Service", key="agree")
+        
+        if st.button("🎉 Create Account", use_container_width=True, type="primary"):
+            if not new_email or not new_pass:
+                st.error("❌ Please fill in all fields")
+            elif len(new_pass) < 6:
+                st.error("❌ Password must be at least 6 characters")
+            elif new_pass != confirm_pass:
+                st.error("❌ Passwords don't match")
+            elif not agree:
+                st.error("❌ Please agree to Terms of Service")
             else:
-                st.info("⏳ Summarizing PDF...")
-                if st.button("⛔ Stop Summarizing", key="stop_pdf_btn"):
-                    st.session_state.stop_generation = True
-                    st.session_state.is_generating = False
-                    st.rerun()
-
-def show_dashboard():
-    st.title("📊 Your Dashboard")
-    
-    try:
-        user_id = st.session_state.user['uid']
-        
-        user_data = supabase.table('users').select('*').eq('id', user_id).execute()
-        
-        if user_data.data:
-            user_info = user_data.data[0]
-            
-            st.subheader("📈 Your Stats")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Total Questions Asked", user_info.get('total_questions', 0))
-            
-            with col2:
-                account_status = "👑 Premium" if st.session_state.is_premium else "Free User"
-                st.metric("Account Type", account_status)
-            
-            with col3:
                 try:
-                    joined_date = datetime.fromisoformat(user_info['created_at']).strftime('%Y-%m-%d')
-                    st.metric("Member Since", joined_date)
-                except:
-                    st.metric("Member Since", "N/A")
+                    with st.spinner("Creating your account..."):
+                        # Sign up the user
+                        res = supabase.auth.sign_up({
+                            "email": new_email, 
+                            "password": new_pass
+                        })
+                        
+                        # Check if email confirmation is required
+                        if res.user:
+                            # AUTO-LOGIN: Set user in session
+                            st.session_state.user = res.user
+                            
+                            st.success("🎉 Account created successfully!")
+                            st.success("✅ You're now logged in!")
+                            st.balloons()
+                            
+                            # Small delay then rerun
+                            import time
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.success("✅ Account created!")
+                            st.info("📧 Please check your email to verify your account, then log in.")
+                            
+                except Exception as e:
+                    error_msg = str(e)
+                    if "already registered" in error_msg.lower():
+                        st.error("❌ This email is already registered. Please log in.")
+                    else:
+                        st.error(f"❌ Signup failed: {error_msg}")
+
+# --- 9. MAIN APP ---
+if st.session_state.user:
+    if not model:
+        st.error("⚠️ AI unavailable. Check errors above.")
+        if st.sidebar.button("Logout"):
+            st.session_state.user = None
+            st.rerun()
+        st.stop()
+    
+    # Sidebar
+    st.sidebar.title("💎 Study Master Pro")
+    st.sidebar.write(f"👋 Hey, **{st.session_state.user.email.split('@')[0]}**!")
+    
+    # Premium
+    if not st.session_state.is_premium:
+        with st.sidebar.expander("⭐ Upgrade to Premium"):
+            st.write("**Premium Benefits:**")
+            st.write("✅ 250 AI uses/day (vs 50)")
+            st.write("✅ Unlimited schedules")
+            st.write("✅ Priority support")
+            st.write("✅ Early access to features")
+            code = st.text_input("Enter Code", type="password", key="prem")
+            if st.button("Activate Premium", key="activate_premium"):
+                if code == "STUDY777":
+                    st.session_state.is_premium = True
+                    st.success("🎉 Premium Activated!")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error("Invalid code")
+    else:
+        st.sidebar.success("⭐ Premium Member")
+    
+    # Usage Counter
+    usage = get_daily_usage()
+    limit = 250 if st.session_state.is_premium else 50
+    
+    if usage >= limit:
+        st.sidebar.error(f"🚫 Limit: {usage}/{limit}")
+    else:
+        st.sidebar.metric("Today's Usage", f"{usage}/{limit}")
+    
+    st.sidebar.progress(min(usage/limit, 1.0))
+    st.sidebar.caption("⏰ Resets every 24 hours")
+    
+    # Menu
+    menu = st.sidebar.radio("📚 Navigation", [
+        "💬 Chat", 
+        "📝 Quiz", 
+        "📁 Image", 
+        "🎯 Tutor",
+        "📅 Schedule Planner"
+    ])
+    
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🚪 Logout", use_container_width=True):
+        st.session_state.user = None
+        st.session_state.chat_history = []
+        st.success("Logged out successfully!")
+        st.rerun()
+    
+    # Check usage limit
+    if usage >= limit and menu != "📅 Schedule Planner":
+        st.error(f"⚠️ Daily limit reached ({usage}/{limit})")
+        st.info("💎 **Upgrade to Premium** for 250 interactions/day!")
+        st.info("⏰ Or wait for your 24-hour reset")
+        st.stop()
+    
+    # Features
+    if menu == "💬 Chat":
+        st.subheader("💬 AI Study Assistant")
+        
+        # Chat controls
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.write("Ask me anything about your studies!")
+        with col2:
+            if st.button("📜 Load History", key="load_hist"):
+                st.session_state.chat_history = load_chat_history()
+                st.success("History loaded!")
+        with col3:
+            if st.button("🗑️ Clear Chat", key="clear_hist"):
+                if clear_chat_history():
+                    st.success("Chat cleared!")
+                    st.rerun()
         
         st.markdown("---")
-        st.subheader("📜 Recent Activity")
         
-        history = supabase.table('history').select('*').eq('user_id', user_id).order('timestamp', desc=True).limit(10).execute()
+        # Display chat history
+        if st.session_state.chat_history:
+            for msg in st.session_state.chat_history:
+                with st.chat_message("user"):
+                    st.write(msg.get("question", ""))
+                with st.chat_message("assistant"):
+                    st.write(msg.get("answer", ""))
         
-        if history.data and len(history.data) > 0:
-            for item in history.data:
-                with st.expander(f"❓ {item['question'][:60]}{'...' if len(item['question']) > 60 else ''}"):
-                    st.write(f"**Question:** {item['question']}")
-                    st.write(f"**Answer:** {item['answer'][:300]}{'...' if len(item['answer']) > 300 else ''}")
-                    
-                    try:
-                        timestamp = datetime.fromisoformat(item['timestamp']).strftime('%Y-%m-%d %H:%M')
-                        st.caption(f"⏰ {timestamp} | Model: {item.get('model_used', 'N/A')}")
-                    except:
-                        st.caption("⏰ Recent")
-        else:
-            st.info("🎯 No activity yet! Start by asking questions in the AI Chat.")
+        # Chat input
+        q = st.chat_input("Type your question...")
+        
+        if q:
+            # Display user message
+            with st.chat_message("user"):
+                st.write(q)
+            
+            try:
+                with st.spinner("Thinking..."):
+                    resp = model.generate_content(q)
+                
+                # Display AI response
+                with st.chat_message("assistant"):
+                    st.write(resp.text)
+                
+                # Save to database and session
+                if save_chat_message(q, resp.text):
+                    st.session_state.chat_history.append({
+                        "question": q,
+                        "answer": resp.text,
+                        "created_at": datetime.now().isoformat()
+                    })
+                
+            except Exception as e:
+                st.error(f"Error: {e}")
     
-    except Exception as e:
-        st.error(f"Error loading dashboard: {str(e)}")
-        st.info("Please try refreshing the page or contact support if the problem persists.")
-
-def main():
-    if not st.session_state.user:
-        show_login()
-    else:
-        show_sidebar()
+    elif menu == "📝 Quiz":
+        st.subheader("📝 Quiz Generator")
+        st.write("Create custom quizzes on any topic!")
         
-        mode = st.session_state.study_mode
+        topic = st.text_input("Topic (e.g., World War 2, Photosynthesis):", key="quiz_topic")
         
-        if mode == "AI Chat":
-            show_chat("chat")
-        elif mode == "Socratic Tutor":
-            show_chat("socratic")
-        elif mode == "Simplifier":
-            show_chat("simplify")
-        elif mode == "Quiz Generator":
-            show_quiz()
-        elif mode == "Multimedia Tools":
-            show_multimedia()
-        elif mode == "Dashboard":
-            show_dashboard()
+        col1, col2 = st.columns(2)
+        with col1:
+            difficulty = st.selectbox("Difficulty:", ["Easy", "Medium", "Hard"], key="quiz_diff")
+        with col2:
+            num_questions = st.slider("Questions:", 3, 10, 5, key="quiz_num")
+        
+        if st.button("🎯 Generate Quiz", use_container_width=True, key="generate_quiz_btn", type="primary"):
+            if not topic:
+                st.error("Please enter a topic!")
+            else:
+                try:
+                    with st.spinner("Creating your quiz..."):
+                        prompt = f"""Create a {num_questions}-question multiple choice quiz about {topic} at {difficulty} difficulty level.
 
-if __name__ == "__main__":
-    main()
+Format:
+**Question 1:** [question]
+A) [option]
+B) [option]
+C) [option]
+D) [option]
+
+[repeat for all questions]
+
+**Answer Key:**
+1. [correct letter]
+2. [correct letter]
+etc."""
+                        resp = model.generate_content(prompt)
+                    
+                    st.markdown("---")
+                    st.markdown(resp.text)
+                    st.markdown("---")
+                    
+                    st.download_button(
+                        label="📥 Download Quiz",
+                        data=resp.text,
+                        file_name=f"quiz_{topic.replace(' ', '_')}.txt",
+                        mime="text/plain",
+                        key="download_quiz"
+                    )
+                    
+                    if supabase:
+                        supabase.table("history").insert({
+                            "user_id": st.session_state.user.id,
+                            "question": f"Quiz: {topic} ({difficulty})",
+                            "answer": resp.text
+                        }).execute()
+                        
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    elif menu == "📁 Image":
+        st.subheader("📁 Image Analysis")
+        st.write("Upload study materials for AI analysis")
+        
+        file = st.file_uploader("Upload image:", type=['jpg', 'png', 'jpeg'], key="image_upload")
+        
+        if file:
+            try:
+                img = PIL.Image.open(file)
+                st.image(img, caption="Your upload", use_container_width=True)
+                
+                if st.button("🔍 Analyze Image", use_container_width=True, key="analyze_img_btn", type="primary"):
+                    with st.spinner("Analyzing..."):
+                        resp = model.generate_content([
+                            """Analyze this study material:
+1. **Summary** - What is this?
+2. **Key Concepts** - Main ideas
+3. **Important Details** - Facts, formulas, dates
+4. **Study Tips** - How to remember
+5. **Practice Questions** - 2-3 test questions""",
+                            img
+                        ])
+                    
+                    st.markdown("---")
+                    st.markdown(resp.text)
+                    st.markdown("---")
+                    
+                    if supabase:
+                        supabase.table("history").insert({
+                            "user_id": st.session_state.user.id,
+                            "question": "Image Analysis",
+                            "answer": resp.text
+                        }).execute()
+                        
+            except Exception as e:
+                st.error(f"Error: {e}")
+    
+    elif menu == "🎯 Tutor":
+        st.subheader("🎯 Socratic Tutor")
+        st.info("💡 Learn through guided questions, not direct answers!")
+        
+        problem = st.text_area("Describe your problem:", height=150, key="tutor_problem")
+        
+        if st.button("🚀 Start Session", use_container_width=True, key="start_tutor_btn", type="primary"):
+            if not problem:
+                st.error("Please describe your problem!")
+            else:
+                try:
+                    with st.spinner("Preparing questions..."):
+                        resp = model.generate_content(f"""Act as a Socratic tutor for: "{problem}"
+
+Do NOT give the answer. Instead:
+1. Ask 3-4 guiding questions
+2. Help them discover the answer
+3. Encourage critical thinking
+4. Be supportive
+
+Start with: "Let me help you think through this..."
+""")
+                    
+                    st.markdown("---")
+                    st.markdown(resp.text)
+                    st.markdown("---")
+                    
+                    if supabase:
+                        supabase.table("history").insert({
+                            "user_id": st.session_state.user.id,
+                            "question": f"Socratic: {problem}",
+                            "answer": resp.text
+                        }).execute()
+                        
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    elif menu == "📅 Schedule Planner":
+        st.subheader("📅 Study Schedule Planner")
+        st.write("Create and manage your study schedule")
+        
+        tab1, tab2, tab3 = st.tabs(["➕ Create Schedule", "📋 My Schedules", "🤖 AI Generator"])
+        
+        with tab1:
+            st.write("### Manual Schedule Creation")
+            
+            schedule_name = st.text_input("Schedule Name:", placeholder="e.g., Final Exams Week", key="sched_name")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input("Start Date:", key="start_date")
+            with col2:
+                end_date = st.date_input("End Date:", key="end_date")
+            
+            st.write("### Add Study Blocks")
+            
+            num_blocks = st.number_input("Number of study blocks:", 1, 10, 3, key="num_blocks")
+            
+            study_blocks = []
+            for i in range(num_blocks):
+                st.write(f"**Block {i+1}**")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    subject = st.text_input(f"Subject:", key=f"subject_{i}", placeholder="e.g., Math")
+                with col2:
+                    start_time = st.time_input(f"Start:", value=time(9, 0), key=f"start_{i}")
+                with col3:
+                    duration = st.selectbox(f"Duration:", ["30 min", "1 hour", "1.5 hours", "2 hours"], key=f"dur_{i}")
+                
+                topic = st.text_input(f"Topic/Task:", key=f"topic_{i}", placeholder="e.g., Chapter 5 - Calculus")
+                
+                if subject and topic:
+                    study_blocks.append({
+                        "subject": subject,
+                        "start_time": start_time.strftime("%H:%M"),
+                        "duration": duration,
+                        "topic": topic
+                    })
+                
+                st.markdown("---")
+            
+            if st.button("💾 Save Schedule", use_container_width=True, key="save_schedule", type="primary"):
+                if not schedule_name:
+                    st.error("Please enter a schedule name!")
+                elif not study_blocks:
+                    st.error("Please add at least one study block!")
+                else:
+                    schedule_data = {
+                        "name": schedule_name,
+                        "start_date": start_date.isoformat(),
+                        "end_date": end_date.isoformat(),
+                        "blocks": study_blocks,
+                        "created_at": datetime.now().isoformat()
+                    }
+                    
+                    if save_schedule(schedule_data):
+                        st.success("✅ Schedule saved successfully!")
+                        st.balloons()
+                    else:
+                        st.error("Failed to save schedule")
+        
+        with tab2:
+            st.write("### Your Saved Schedules")
+            
+            schedules = load_schedules()
+            
+            if not schedules:
+                st.info("📅 No schedules yet. Create one in the 'Create Schedule' tab!")
+            else:
+                for schedule in schedules:
+                    schedule_data = json.loads(schedule["schedule_data"])
+                    
+                    with st.expander(f"📅 {schedule_data['name']}", expanded=False):
+                        st.write(f"**Period:** {schedule_data['start_date']} to {schedule_data['end_date']}")
+                        st.write(f"**Created:** {schedule['created_at'][:10]}")
+                        
+                        st.write("### Study Blocks:")
+                        for i, block in enumerate(schedule_data['blocks'], 1):
+                            st.write(f"**{i}. {block['subject']}** - {block['start_time']} ({block['duration']})")
+                            st.write(f"   📖 {block['topic']}")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            text = f"{schedule_data['name']}\n"
+                            text += f"Period: {schedule_data['start_date']} to {schedule_data['end_date']}\n\n"
+                            for i, block in enumerate(schedule_data['blocks'], 1):
+                                text += f"{i}. {block['subject']} - {block['start_time']} ({block['duration']})\n"
+                                text += f"   Topic: {block['topic']}\n\n"
+                            
+                            st.download_button(
+                                "📥 Download",
+                                data=text,
+                                file_name=f"{schedule_data['name']}.txt",
+                                key=f"dl_{schedule['id']}"
+                            )
+                        
+                        with col2:
+                            if st.button("🗑️ Delete", key=f"delete_{schedule['id']}"):
+                                if delete_schedule(schedule['id']):
+                                    st.success("Deleted!")
+                                    st.rerun()
+        
+        with tab3:
+            st.write("### 🤖 AI-Powered Schedule Generator")
+            st.info("Let AI create an optimized study schedule for you!")
+            
+            exam_date = st.date_input("Exam/Deadline Date:", key="ai_exam_date")
+            subjects = st.text_area("Subjects to study (one per line):", 
+                                    placeholder="Math\nPhysics\nChemistry\nBiology", 
+                                    key="ai_subjects")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                hours_per_day = st.slider("Study hours per day:", 1, 12, 4, key="ai_hours")
+            with col2:
+                difficulty = st.selectbox("Overall difficulty:", ["Easy", "Medium", "Hard"], key="ai_diff")
+            
+            preferences = st.text_area("Special preferences (optional):", 
+                                       placeholder="e.g., I'm a morning person, need breaks every hour",
+                                       key="ai_prefs")
+            
+            if st.button("🎯 Generate AI Schedule", use_container_width=True, key="gen_ai_schedule", type="primary"):
+                if not subjects:
+                    st.error("Please enter subjects!")
+                else:
+                    try:
+                        with st.spinner("AI is creating your personalized schedule..."):
+                            days_until_exam = (exam_date - datetime.now().date()).days
+                            
+                            prompt = f"""Create a detailed study schedule with these parameters:
+
+- Exam/Deadline: {days_until_exam} days from now
+- Subjects: {subjects}
+- Daily study time: {hours_per_day} hours
+- Difficulty level: {difficulty}
+- Preferences: {preferences if preferences else 'None'}
+
+Provide:
+1. **Overview** - Study strategy summary
+2. **Daily Breakdown** - What to study each day with time blocks
+3. **Tips** - Study techniques and time management advice
+4. **Revision Plan** - When to review each subject
+
+Make it realistic and achievable!"""
+                            
+                            resp = model.generate_content(prompt)
+                        
+                        st.markdown("---")
+                        st.markdown(resp.text)
+                        st.markdown("---")
+                        
+                        st.download_button(
+                            "📥 Download AI Schedule",
+                            data=resp.text,
+                            file_name="ai_study_schedule.txt",
+                            mime="text/plain",
+                            key="download_ai_schedule"
+                        )
+                        
+                        # Save to history (counts towards usage)
+                        if supabase:
+                            supabase.table("history").insert({
+                                "user_id": st.session_state.user.id,
+                                "question": f"AI Schedule: {subjects.split()[0]}... ({days_until_exam} days)",
+                                "answer": resp.text
+                            }).execute()
+                        
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+else:
+    login_screen()

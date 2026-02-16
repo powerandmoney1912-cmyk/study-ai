@@ -819,4 +819,3 @@ if prompt:
     full_prompt = f"Act as a {subject} expert. Respond in {language}. Question: {prompt}"
     response = model.generate_content(full_prompt)
     st.markdown(response.text)
-

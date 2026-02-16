@@ -359,7 +359,6 @@ if st.session_state.user:
         st.warning("⚠️ AI features temporarily unavailable")
         st.info("💡 You can still use the Schedule Planner feature!")
         
-        # Show only schedule planner when AI unavailable
         st.sidebar.title("💎 Study Master Pro")
         st.sidebar.write(f"👋 Hey, **{st.session_state.user.email.split('@')[0]}**!")
         st.sidebar.warning("🤖 AI: Offline")
@@ -368,11 +367,8 @@ if st.session_state.user:
             st.session_state.user = None
             st.rerun()
         
-        # Show schedule planner only
         st.subheader("📅 Study Schedule Planner")
         st.write("AI is temporarily unavailable, but you can still create and manage schedules!")
-        
-        # [Schedule planner code continues - same as before]
         st.stop()
     
     # Sidebar
@@ -398,7 +394,7 @@ if st.session_state.user:
     else:
         st.sidebar.success("⭐ Premium Member")
     
-    # Usage Counter with API awareness
+    # Usage Counter
     usage = get_daily_usage()
     api_calls = st.session_state.api_calls_today
     limit = 250 if st.session_state.is_premium else 50
@@ -435,11 +431,10 @@ if st.session_state.user:
         st.info("💎 **Upgrade to Premium** for 250 interactions/day!")
         st.stop()
     
-    # Features with rate limit handling
+    # Features
     if menu == "💬 Chat":
         st.subheader("💬 AI Study Assistant")
         
-        # Show API limit warning
         if api_calls >= 15:
             st.warning(f"⚠️ Google API: {api_calls}/20 calls used. Consider using Schedule Planner instead!")
         
@@ -806,16 +801,3 @@ Be realistic!"""
 
 else:
     login_screen()
-   
-    # Add this in the sidebar
-with st.sidebar:
-    st.header("Study Settings")
-    subject = st.selectbox("Choose a Subject", ["General", "Math", "Science", "History", "Coding"])
-    language = st.selectbox("Choose a Language", ["English", "Spanish", "Hindi", "French", "German"])
-
-# Then, update the prompt to include these choices
-if prompt:
-    # We tell the AI what subject and language to use
-    full_prompt = f"Act as a {subject} expert. Respond in {language}. Question: {prompt}"
-    response = model.generate_content(full_prompt)
-    st.markdown(response.text)

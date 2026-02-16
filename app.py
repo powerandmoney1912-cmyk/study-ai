@@ -108,13 +108,6 @@ st.markdown("""
         padding: 20px;
         background: rgba(99, 102, 241, 0.05);
     }
-    
-    /* Chat input container alignment */
-    .chat-input-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -430,4 +423,92 @@ if st.session_state.user:
         if not st.session_state.is_premium:
             with st.expander("⭐ Go Premium"):
                 st.write("**Benefits:**")
-                st.write("• 250
+                st.write("• 250 uses/day")
+                st.write("• Priority support")
+                st.write("• Early features")
+                code = st.text_input("Code", type="password", key="prem")
+                if st.button("Activate", key="activate_premium", use_container_width=True):
+                    if code == "STUDY777":
+                        st.session_state.is_premium = True
+                        st.success("🎉 Premium!")
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error("Invalid")
+        else:
+            st.success("⭐ Premium Active")
+        
+        st.markdown("---")
+        
+        # Usage
+        usage = get_daily_usage()
+        limit = 250 if st.session_state.is_premium else 50
+        
+        if usage >= limit:
+            st.error(f"🚫 {usage}/{limit}")
+        else:
+            st.metric("Daily Usage", f"{usage}/{limit}")
+        
+        st.progress(min(usage/limit, 1.0))
+        st.caption("⏰ Resets in 24h")
+        
+        st.markdown("---")
+        
+        # Menu
+        menu = st.radio("📚 Navigation", [
+            "💬 Chat",
+            "📝 Quiz",
+            "📁 Image",
+            "🎯 Tutor",
+            "📅 Planner"
+        ], label_visibility="collapsed")
+        
+        st.markdown("---")
+        
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.user = None
+            st.session_state.chat_messages = []
+            st.rerun()
+    
+    # Check limit
+    if usage >= limit and menu != "📅 Planner":
+        st.error("⚠️ Daily limit reached!")
+        st.info("💎 Upgrade to Premium for 250/day")
+        st.stop()
+    
+    # CHAT
+    if menu == "💬 Chat":
+        st.title("💬 AI Study Assistant")
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.write("Ask me anything about your studies!")
+        with col2:
+            if st.button("📜 Load History", key="load_hist"):
+                loaded = load_chat_history()
+                if loaded:
+                    st.session_state.chat_messages = loaded
+                    st.success(f"✅ Loaded {len(loaded)//2} chats")
+                    st.rerun()
+        with col3:
+            if st.button("🗑️ Clear All", key="clear_hist"):
+                if clear_chat_history():
+                    st.success("✅ Cleared")
+                    st.rerun()
+        
+        st.markdown("---")
+        
+        # Display messages
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+        
+        # Chat input with CIRCULAR stop button (FIXED LINE 403)
+        if st.session_state.is_generating:
+            # Show stop button during generation
+            cols = st.columns([20, 1])
+            with cols[0]:
+                st.chat_input("Type your question...", key="chat_input_gen", disabled=True)
+            with cols[1]:
+                st.markdown('<div class="stop-button">', unsafe_allow_html=True)
+                if st.but

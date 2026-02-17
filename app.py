@@ -4,8 +4,8 @@ from supabase import create_client, Client
 from datetime import datetime, timedelta
 import time
 import base64
-from PIL import Image
 import io
+from PIL import Image
 
 # --- 1. CORE SETUP ---
 st.set_page_config(page_title="Study Master Infinity", layout="wide", page_icon="🎓")
@@ -816,68 +816,228 @@ Make them challenging and educational!"""
 
 elif menu == "📸 Image Analysis":
     st.header("📸 Image Analysis Lab")
-    st.write("Upload or capture images of your study materials!")
-    
+    st.caption("🔍 Real AI-powered image analysis using Groq Vision!")
+
+    def analyze_image_with_groq(image_file, prompt):
+        """Direct image analysis using Groq vision model"""
+        try:
+            import base64
+
+            # Convert image to base64
+            img = Image.open(image_file)
+
+            # Convert to RGB if needed (removes alpha channel)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+
+            # Save to bytes
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG")
+            buffer.seek(0)
+            image_bytes = buffer.read()
+
+            # Encode to base64
+            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+            # Call Groq vision model
+            response = groq_client.chat.completions.create(
+                model="meta-llama/llama-4-scout-17b-16e-instruct",  # Groq vision model
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_b64}"
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=1500
+            )
+
+            return response.choices[0].message.content, None
+
+        except Exception as e:
+            error_str = str(e)
+            if "model" in error_str.lower() or "not found" in error_str.lower():
+                # Try fallback vision model
+                try:
+                    response = groq_client.chat.completions.create(
+                        model="llava-v1.5-7b-4096-preview",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/jpeg;base64,{image_b64}"
+                                        }
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": prompt
+                                    }
+                                ]
+                            }
+                        ],
+                        max_tokens=1500
+                    )
+                    return response.choices[0].message.content, None
+                except Exception as e2:
+                    return None, str(e2)
+            return None, error_str
+
+    # Tabs for upload vs camera
     tab1, tab2 = st.tabs(["📤 Upload Image", "📷 Take Photo"])
-    
+
     with tab1:
-        uploaded_file = st.file_uploader("Choose an image", type=['png', 'jpg', 'jpeg'])
-        
+        uploaded_file = st.file_uploader(
+            "Upload your study material",
+            type=['png', 'jpg', 'jpeg', 'webp'],
+            key="img_upload"
+        )
+
         if uploaded_file:
             image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Image", width=400)
-            
-            analysis_type = st.radio("What would you like to know?", [
-                "📝 Explain the content",
-                "💡 Summarize key points",
-                "❓ Generate practice questions",
-                "🔍 Identify formulas/concepts"
-            ])
-            
-            if st.button("🔍 Analyze Image", type="primary"):
-                prompt_map = {
-                    "📝 Explain the content": "Explain what's shown in this study material in detail.",
-                    "💡 Summarize key points": "List the key points and concepts from this image.",
-                    "❓ Generate practice questions": "Create 5 practice questions based on the content in this image.",
-                    "🔍 Identify formulas/concepts": "Identify and explain any formulas, equations, or key concepts shown."
-                }
-                
-                # Note: Groq doesn't support image input yet
-                st.warning("⚠️ Image recognition coming soon!")
-                st.info("💡 **Workaround:** Describe what you see in the image, and I'll help you understand it!")
-                
-                image_desc = st.text_area("Describe what you see in the image:", 
-                                         placeholder="e.g., A diagram showing the water cycle with labels...")
-                
-                if image_desc:
-                    prompt = f"{prompt_map[analysis_type]}\n\nImage description: {image_desc}"
-                    
-                    with st.spinner("Analyzing..."):
-                        result = ask_ai(prompt, include_memory=False)
-                    
-                    st.markdown("---")
-                    st.markdown(result)
-    
+            st.image(image, caption="Your Image", width=450)
+
+            st.markdown("---")
+
+            # Analysis type
+            analysis_type = st.radio(
+                "📋 What do you want to know?",
+                [
+                    "📝 Explain everything in this image",
+                    "💡 Summarize the key points",
+                    "❓ Generate practice questions",
+                    "🔍 Identify formulas and concepts",
+                    "📊 Explain diagrams or charts",
+                    "✍️ Custom question"
+                ],
+                key="analysis_type_upload"
+            )
+
+            custom_q = ""
+            if analysis_type == "✍️ Custom question":
+                custom_q = st.text_input("Type your question about the image:", key="custom_q")
+
+            prompt_map = {
+                "📝 Explain everything in this image": "You are an expert study assistant. Explain everything you see in this image in detail. If it's a textbook page, explain the content. If it's a diagram, explain what it shows. Be thorough and educational.",
+                "💡 Summarize the key points": "You are an expert study assistant. Look at this image and summarize all the key points and important information. Format as a numbered list.",
+                "❓ Generate practice questions": "You are an expert study assistant. Based on what you see in this image, create 5 practice exam questions with answers. Make them educational and relevant to the content shown.",
+                "🔍 Identify formulas and concepts": "You are an expert study assistant. Identify and explain every formula, equation, concept, or technical term visible in this image. Give a clear explanation of each one.",
+                "📊 Explain diagrams or charts": "You are an expert study assistant. Describe and explain this diagram or chart in detail. What does it show? What are the key takeaways? What does each part mean?",
+                "✍️ Custom question": custom_q if custom_q else "Describe what you see in this image."
+            }
+
+            if st.button("🔍 Analyze Image", use_container_width=True, type="primary", key="analyze_upload"):
+                if analysis_type == "✍️ Custom question" and not custom_q:
+                    st.error("Please type your question first!")
+                else:
+                    prompt = prompt_map[analysis_type]
+
+                    with st.spinner("🧠 Groq Vision is analyzing your image..."):
+                        result, error = analyze_image_with_groq(uploaded_file, prompt)
+
+                    if result:
+                        st.markdown("---")
+                        st.write("### 📋 Analysis Result:")
+                        st.markdown(result)
+                        st.markdown("---")
+
+                        # Download button
+                        st.download_button(
+                            "📥 Download Analysis",
+                            result,
+                            file_name="image_analysis.txt",
+                            mime="text/plain"
+                        )
+
+                        # Award XP
+                        try:
+                            current_xp = user_data.get('xp', 0)
+                            supabase.table("profiles").update({
+                                "xp": current_xp + 10
+                            }).eq("id", st.session_state.user.id).execute()
+                            st.caption("⭐ +10 XP earned!")
+                        except:
+                            pass
+                    else:
+                        st.error(f"❌ Analysis failed: {error}")
+                        st.info("💡 Make sure your image is clear and not too large!")
+
     with tab2:
-        camera_photo = st.camera_input("Take a picture")
-        
+        st.write("📷 Take a photo of your study material!")
+        camera_photo = st.camera_input("Point camera at your notes or textbook", key="camera_input")
+
         if camera_photo:
             st.success("📸 Photo captured!")
-            st.info("💡 **Coming Soon:** Direct image analysis!")
-            st.write("For now, please describe what's in the photo:")
-            
-            photo_desc = st.text_area("What's in the photo?", 
-                                     placeholder="Describe the content...")
-            
-            if photo_desc and st.button("Analyze", type="primary"):
-                prompt = f"Help me understand this study material: {photo_desc}"
-                
-                with st.spinner("Analyzing..."):
-                    result = ask_ai(prompt, include_memory=False)
-                
-                st.markdown("---")
-                st.markdown(result)
 
+            analysis_type_cam = st.radio(
+                "📋 What do you want to know?",
+                [
+                    "📝 Explain everything",
+                    "💡 Key points only",
+                    "❓ Practice questions",
+                    "✍️ Custom question"
+                ],
+                key="analysis_type_cam"
+            )
+
+            custom_q_cam = ""
+            if analysis_type_cam == "✍️ Custom question":
+                custom_q_cam = st.text_input("Your question:", key="custom_q_cam")
+
+            prompt_map_cam = {
+                "📝 Explain everything": "You are an expert study assistant. Explain everything you see in this image in detail. Be thorough and educational.",
+                "💡 Key points only": "You are an expert study assistant. List only the key points visible in this image as a numbered list.",
+                "❓ Practice questions": "You are an expert study assistant. Create 5 practice questions based on what you see in this image.",
+                "✍️ Custom question": custom_q_cam if custom_q_cam else "Describe this image."
+            }
+
+            if st.button("🔍 Analyze Photo", use_container_width=True, type="primary", key="analyze_cam"):
+                if analysis_type_cam == "✍️ Custom question" and not custom_q_cam:
+                    st.error("Please type your question!")
+                else:
+                    prompt = prompt_map_cam[analysis_type_cam]
+
+                    with st.spinner("🧠 Groq Vision is analyzing your photo..."):
+                        result, error = analyze_image_with_groq(camera_photo, prompt)
+
+                    if result:
+                        st.markdown("---")
+                        st.write("### 📋 Analysis Result:")
+                        st.markdown(result)
+                        st.markdown("---")
+
+                        st.download_button(
+                            "📥 Download Analysis",
+                            result,
+                            file_name="photo_analysis.txt",
+                            mime="text/plain"
+                        )
+
+                        # Award XP
+                        try:
+                            current_xp = user_data.get('xp', 0)
+                            supabase.table("profiles").update({
+                                "xp": current_xp + 10
+                            }).eq("id", st.session_state.user.id).execute()
+                            st.caption("⭐ +10 XP earned!")
+                        except:
+                            pass
+                    else:
+                        st.error(f"❌ Analysis failed: {error}")
+                        st.info("💡 Try taking a clearer photo with good lighting!")
+                
 elif menu == "🗂️ Flashcards":
     st.header("🗂️ Flashcard Generator")
     st.write("Create study flashcards instantly!")

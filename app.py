@@ -164,7 +164,7 @@ try:
 
         username_input = st.text_input(
             "👤 Username",
-            placeholder="e.g., Seashore, Kanadasan, StudyNinja",
+            placeholder="e.g., Seashore, Kandasamy, StarLearner",
             max_chars=20,
             key="username_setup"
         )
@@ -239,7 +239,7 @@ try:
                     else:
                         st.error(f"❌ Error: {error_msg}")
 
-        st.caption("💡 Examples: Seashore, Kanadasan, StudyNinja, MathWizard")
+        st.caption("💡 Examples: Seashore, Kandasamy, StarLearner, MathWizard")
         st.stop()
     
     user_data = profile_res.data[0]

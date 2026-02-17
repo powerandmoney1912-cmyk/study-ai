@@ -154,74 +154,92 @@ try:
         # Username Setup Screen
         st.title("🎨 Complete Your Profile")
         st.write("### Choose Your Username")
-        st.info("💡 This is how you'll appear in the app. Choose wisely!")
-        
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            username_input = st.text_input(
-                "👤 Username", 
-                placeholder="e.g., StudyNinja, MathWizard, BrainMaster",
-                max_chars=20,
-                key="username_setup"
-            )
-            
-            # Username validation
-            if username_input:
-                if len(username_input) < 3:
-                    st.warning("⚠️ Username must be at least 3 characters")
-                elif len(username_input) > 20:
-                    st.warning("⚠️ Username too long (max 20 characters)")
-                elif not username_input.replace('_', '').replace('-', '').isalnum():
-                    st.warning("⚠️ Username can only contain letters, numbers, _ and -")
-                else:
-                    st.success("✅ Username looks good!")
-        
-        with col2:
-            st.write("")  # Spacing
-        
-        # Avatar selection (optional)
-        st.write("### Pick Your Avatar (Optional)")
+        st.info("💡 This is how you'll appear in the app!")
+
+        import re
+
+        def is_valid_username(name):
+            """Allow letters (including Tamil/Unicode), numbers, _ and -"""
+            return bool(re.match(r'^[\w\-]{3,20}$', name, re.UNICODE))
+
+        username_input = st.text_input(
+            "👤 Username",
+            placeholder="e.g., Seashore, Kanadasan, StudyNinja",
+            max_chars=20,
+            key="username_setup"
+        )
+
+        # Live validation feedback
+        if username_input:
+            if len(username_input) < 3:
+                st.warning("⚠️ Username must be at least 3 characters")
+            elif len(username_input) > 20:
+                st.warning("⚠️ Username too long (max 20 characters)")
+            elif not is_valid_username(username_input):
+                st.warning("⚠️ No spaces or special characters allowed")
+            else:
+                st.success("✅ Username looks good!")
+
+        # Avatar selection
+        st.write("### Pick Your Avatar")
         avatar_options = ["🎓", "📚", "🧠", "⚡", "🌟", "🚀", "💎", "🔥", "👑", "🎯"]
         selected_avatar = st.selectbox("Choose an emoji:", avatar_options, key="avatar_select")
-        
+
         st.markdown("---")
-        
-        if st.button("💾 Create Profile", use_container_width=True, type="primary"):
+
+        if st.button("💾 Save & Continue", use_container_width=True, type="primary"):
             if not username_input:
                 st.error("❌ Please enter a username")
             elif len(username_input) < 3:
                 st.error("❌ Username must be at least 3 characters")
             elif len(username_input) > 20:
                 st.error("❌ Username too long (max 20 characters)")
-            elif not username_input.replace('_', '').replace('-', '').isalnum():
-                st.error("❌ Username can only contain letters, numbers, _ and -")
+            elif not is_valid_username(username_input):
+                st.error("❌ No spaces or special characters allowed")
             else:
                 try:
-                    # Check if username already exists
-                    existing = supabase.table("profiles").select("username").eq("username", username_input).execute()
-                    
+                    # Check if username is taken
+                    existing = supabase.table("profiles").select("id").eq("username", username_input).execute()
+
                     if existing.data:
-                        st.error("❌ Username already taken! Please choose another.")
+                        st.error("❌ Username already taken! Try another one.")
                     else:
-                        # Create profile
-                        supabase.table("profiles").insert({
-                            "id": st.session_state.user.id,
-                            "username": username_input,
-                            "avatar": selected_avatar,
-                            "xp": 0,
-                            "is_premium": False,
-                            "created_at": datetime.now().isoformat()
-                        }).execute()
-                        
+                        # Try inserting with avatar first, fallback without if column missing
+                        try:
+                            supabase.table("profiles").insert({
+                                "id": st.session_state.user.id,
+                                "username": username_input,
+                                "avatar": selected_avatar,
+                                "xp": 0,
+                                "is_premium": False,
+                                "created_at": datetime.now().isoformat()
+                            }).execute()
+                        except Exception:
+                            # Fallback: insert without avatar column
+                            supabase.table("profiles").insert({
+                                "id": st.session_state.user.id,
+                                "username": username_input,
+                                "xp": 0,
+                                "is_premium": False,
+                                "created_at": datetime.now().isoformat()
+                            }).execute()
+
                         st.success(f"✅ Welcome, {username_input}! 🎉")
                         st.balloons()
                         time.sleep(1)
                         st.rerun()
+
                 except Exception as e:
-                    st.error(f"❌ Error creating profile: {e}")
-        
-        st.markdown("---")
-        st.caption("🎯 You can change your username later in settings")
+                    error_msg = str(e)
+                    # Show clean error messages
+                    if "duplicate" in error_msg.lower() or "unique" in error_msg.lower():
+                        st.error("❌ Username already taken! Try another one.")
+                    elif "foreign key" in error_msg.lower():
+                        st.error("❌ Session expired. Please log out and log in again.")
+                    else:
+                        st.error(f"❌ Error: {error_msg}")
+
+        st.caption("💡 Examples: Seashore, Kanadasan, StudyNinja, MathWizard")
         st.stop()
     
     user_data = profile_res.data[0]

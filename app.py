@@ -8,7 +8,26 @@ import io
 from PIL import Image
 
 # --- 1. CORE SETUP ---
-st.set_page_config(page_title="Study Master Infinity", layout="wide", page_icon="🎓")
+st.set_page_config(
+    page_title="Study Master Infinity - Free AI Study Assistant",
+    layout="wide",
+    page_icon="🎓",
+    initial_sidebar_state="expanded"
+)
+
+# Google Search Console Verification + SEO Meta Tags
+st.markdown("""
+<head>
+    <meta name="google-site-verification" content="ThWp6_7rt4Q973HycJ07l-jYZ0o55s8f0Em28jBBNoU" />
+    <meta name="description" content="Study Master Infinity - Free AI study assistant with chat, quiz generator, teacher mode, image analysis and study planner. Powered by Groq AI.">
+    <meta name="keywords" content="study master infinity, study master, AI study tool, free study assistant, AI tutor, quiz generator, study planner, groq ai, free education tool">
+    <meta name="author" content="Aarya">
+    <meta property="og:title" content="Study Master Infinity - Free AI Study Assistant">
+    <meta property="og:description" content="Chat with AI, generate quizzes, get tested and graded, analyze images - all free!">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="🎓">
+</head>
+""", unsafe_allow_html=True)
 
 # Initialize APIs
 try:

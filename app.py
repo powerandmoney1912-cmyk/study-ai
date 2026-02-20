@@ -132,6 +132,7 @@ def init_session_state():
         'user': None,
         'is_guest': False,  # Track if user is guest
         'user_data': {},
+        'selected_menu': "🏠 Home",  # Track menu selection
         'chat_messages': [],
         'test_active': False,
         'test_questions': [],
@@ -761,7 +762,18 @@ def show_sidebar():
             "⏱️ Study Timer",
             "📊 Dashboard",
             "⚙️ Settings"
-        ])
+        ], index=0 if st.session_state.selected_menu not in [
+            "🏠 Home", "💬 Chat", "📝 Quiz Generator", "👨‍🏫 Teacher Mode",
+            "📅 Schedule Planner", "📸 Image Analysis", "🗂️ Flashcards",
+            "📓 Study Notes", "⏱️ Study Timer", "📊 Dashboard", "⚙️ Settings"
+        ] else [
+            "🏠 Home", "💬 Chat", "📝 Quiz Generator", "👨‍🏫 Teacher Mode",
+            "📅 Schedule Planner", "📸 Image Analysis", "🗂️ Flashcards",
+            "📓 Study Notes", "⏱️ Study Timer", "📊 Dashboard", "⚙️ Settings"
+        ].index(st.session_state.selected_menu))
+        
+        # Update selected menu when radio changes
+        st.session_state.selected_menu = menu
         
         st.markdown("---")
         
@@ -829,18 +841,18 @@ def show_home():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("💬 Start Chatting", use_container_width=True):
-            st.session_state.sidebar_choice = "💬 Chat"
+        if st.button("💬 Start Chatting", use_container_width=True, key="home_chat"):
+            st.session_state.selected_menu = "💬 Chat"
             st.rerun()
     
     with col2:
-        if st.button("📝 Take a Quiz", use_container_width=True):
-            st.session_state.sidebar_choice = "📝 Quiz Generator"
+        if st.button("📝 Take a Quiz", use_container_width=True, key="home_quiz"):
+            st.session_state.selected_menu = "📝 Quiz Generator"
             st.rerun()
     
     with col3:
-        if st.button("👨‍🏫 Start Test", use_container_width=True):
-            st.session_state.sidebar_choice = "👨‍🏫 Teacher Mode"
+        if st.button("👨‍🏫 Start Test", use_container_width=True, key="home_test"):
+            st.session_state.selected_menu = "👨‍🏫 Teacher Mode"
             st.rerun()
     
     st.markdown("---")

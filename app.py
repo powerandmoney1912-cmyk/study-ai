@@ -130,6 +130,7 @@ def init_session_state():
     """Initialize all session state variables"""
     defaults = {
         'user': None,
+        'is_guest': False,  # Track if user is guest
         'user_data': {},
         'chat_messages': [],
         'test_active': False,
@@ -333,7 +334,11 @@ def analyze_image_with_ai(image_file, prompt):
 # ==================== DATABASE FUNCTIONS ====================
 
 def save_chat_message(role, content):
-    """Save chat message to database"""
+    """Save chat message to database - only for logged-in users"""
+    # Don't save for guests
+    if st.session_state.get('is_guest', False):
+        return True  # Return True so app doesn't break
+    
     if not supabase or not st.session_state.user:
         return False
     
@@ -349,7 +354,11 @@ def save_chat_message(role, content):
         return False
 
 def load_chat_history():
-    """Load recent chat history"""
+    """Load recent chat history - only for logged-in users"""
+    # Guests don't have history
+    if st.session_state.get('is_guest', False):
+        return []
+    
     if not supabase or not st.session_state.user:
         return []
     
@@ -364,6 +373,11 @@ def load_chat_history():
 
 def clear_chat_history():
     """Clear all chat history"""
+    # For guests, just clear session
+    if st.session_state.get('is_guest', False):
+        st.session_state.chat_messages = []
+        return True
+    
     if not supabase or not st.session_state.user:
         return False
     
@@ -377,7 +391,11 @@ def clear_chat_history():
         return False
 
 def save_note(title, content, tags=""):
-    """Save study note"""
+    """Save study note - only for logged-in users"""
+    # Guests can't save notes
+    if st.session_state.get('is_guest', False):
+        return False
+    
     if not supabase or not st.session_state.user:
         return False
     
@@ -394,7 +412,11 @@ def save_note(title, content, tags=""):
         return False
 
 def load_notes():
-    """Load user's notes"""
+    """Load user's notes - only for logged-in users"""
+    # Guests don't have notes
+    if st.session_state.get('is_guest', False):
+        return []
+    
     if not supabase or not st.session_state.user:
         return []
     
@@ -408,7 +430,7 @@ def load_notes():
 
 def delete_note(note_id):
     """Delete a note"""
-    if not supabase:
+    if not supabase or st.session_state.get('is_guest', False):
         return False
     
     try:
@@ -420,7 +442,7 @@ def delete_note(note_id):
 # ==================== AUTHENTICATION ====================
 
 def login_screen():
-    """Beautiful login/signup screen"""
+    """Beautiful login/signup screen with guest access option"""
     
     # Header
     st.markdown('<h1 class="main-header">🎓 Study Master Infinity</h1>', unsafe_allow_html=True)
@@ -438,6 +460,20 @@ def login_screen():
         st.info("📊 **Progress Tracking**\nXP & levels")
     
     st.markdown("---")
+    
+    # Guest access button (prominent)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🚀 Try as Guest (No Login Required)", use_container_width=True, type="primary"):
+            # Set guest user
+            st.session_state.user = {"id": "guest", "email": "guest@studymaster.app"}
+            st.session_state.is_guest = True
+            st.success("✅ Welcome, Guest! Your session won't be saved.")
+            time.sleep(0.5)
+            st.rerun()
+    
+    st.markdown("---")
+    st.write("**Or login to save your progress:**")
     
     # Login/Signup tabs
     tab1, tab2 = st.tabs(["🔑 Login", "✨ Create Account"])
@@ -467,6 +503,7 @@ def login_screen():
                                 "password": login_pass
                             })
                             st.session_state.user = res.user
+                            st.session_state.is_guest = False
                             st.success("✅ Login successful!")
                             st.balloons()
                             time.sleep(0.5)
@@ -483,7 +520,7 @@ def login_screen():
     # SIGNUP TAB
     with tab2:
         st.write("### Join Study Master Infinity!")
-        st.success("🎁 Free forever • No credit card required")
+        st.success("🎁 Free forever • Save your progress")
         
         with st.form("signup_form"):
             signup_email = st.text_input("📧 Email Address", placeholder="your@email.com")
@@ -525,6 +562,7 @@ def login_screen():
                                 # Auto-login if email confirmed
                                 if hasattr(res.user, 'email_confirmed_at') and res.user.email_confirmed_at:
                                     st.session_state.user = res.user
+                                    st.session_state.is_guest = False
                                     st.success("🎉 You're now logged in!")
                                     time.sleep(1)
                                     st.rerun()
@@ -539,9 +577,25 @@ def login_screen():
     
     st.markdown("---")
     st.caption("🔐 Your data is encrypted and secure • 🌍 Available worldwide • ⚡ Powered by Groq AI")
+    st.caption("💡 **Guest Mode:** Try all features without login, but your progress won't be saved")
 
 def username_setup_screen():
-    """Username and profile setup screen"""
+    """Username and profile setup screen - skip for guests"""
+    
+    # Check if guest
+    if st.session_state.get('is_guest', False):
+        # Skip profile setup for guests
+        st.session_state.user_data = {
+            'username': 'Guest',
+            'avatar': '👤',
+            'xp': 0,
+            'is_premium': False,
+            'study_streak': 0,
+            'total_study_time': 0
+        }
+        st.rerun()
+        return
+    
     st.title("🎨 Complete Your Profile")
     st.write("### Choose Your Identity")
     st.info("💡 Pick a unique username - this is how you'll be known!")
@@ -625,28 +679,39 @@ def username_setup_screen():
 def show_sidebar():
     """Enhanced sidebar with user info and navigation"""
     with st.sidebar:
+        # Check if guest
+        is_guest = st.session_state.get('is_guest', False)
+        
         # User profile header
-        avatar = st.session_state.user_data.get('avatar', '🎓')
-        username = st.session_state.user_data.get('username', 'User')
-        
-        st.markdown(f"# {avatar} {username}")
-        
-        # Level and XP
-        xp = st.session_state.user_data.get('xp', 0)
-        level = xp // 100 + 1
-        xp_in_level = xp % 100
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("📊 Level", level)
-        with col2:
-            st.metric("⭐ XP", xp)
-        with col3:
-            streak = st.session_state.user_data.get('study_streak', 0)
-            st.metric("🔥 Streak", f"{streak}d")
-        
-        st.progress(xp_in_level / 100)
-        st.caption(f"{xp_in_level}/100 XP to Level {level + 1}")
+        if is_guest:
+            st.markdown("# 👤 Guest Mode")
+            st.warning("⚠️ Progress not saved")
+            if st.button("🔐 Login to Save Progress", use_container_width=True):
+                st.session_state.user = None
+                st.session_state.is_guest = False
+                st.rerun()
+        else:
+            avatar = st.session_state.user_data.get('avatar', '🎓')
+            username = st.session_state.user_data.get('username', 'User')
+            
+            st.markdown(f"# {avatar} {username}")
+            
+            # Level and XP
+            xp = st.session_state.user_data.get('xp', 0)
+            level = xp // 100 + 1
+            xp_in_level = xp % 100
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📊 Level", level)
+            with col2:
+                st.metric("⭐ XP", xp)
+            with col3:
+                streak = st.session_state.user_data.get('study_streak', 0)
+                st.metric("🔥 Streak", f"{streak}d")
+            
+            st.progress(xp_in_level / 100)
+            st.caption(f"{xp_in_level}/100 XP to Level {level + 1}")
         
         st.markdown("---")
         
@@ -1686,31 +1751,51 @@ def show_dashboard():
 def main():
     """Main application logic"""
     
-    # Check if user is logged in
+    # Check if user is logged in (or guest)
     if not st.session_state.user:
         login_screen()
         return
     
-    # Load user profile
-    try:
-        profile_res = supabase.table("profiles").select("*").eq("id", st.session_state.user.id).execute()
-        
-        if not profile_res.data:
-            username_setup_screen()
-            return
-        
-        st.session_state.user_data = profile_res.data[0]
-    except Exception as e:
-        st.error(f"Profile error: {e}")
-        st.session_state.user_data = {"username": "User", "xp": 0, "is_premium": False}
+    # Check if guest mode
+    is_guest = st.session_state.get('is_guest', False)
+    
+    if is_guest:
+        # Set default guest data
+        st.session_state.user_data = {
+            'username': 'Guest',
+            'avatar': '👤',
+            'xp': 0,
+            'is_premium': False,
+            'study_streak': 0,
+            'total_study_time': 0
+        }
+    else:
+        # Load user profile for logged-in users
+        try:
+            profile_res = supabase.table("profiles").select("*").eq("id", st.session_state.user.id).execute()
+            
+            if not profile_res.data:
+                username_setup_screen()
+                return
+            
+            st.session_state.user_data = profile_res.data[0]
+        except Exception as e:
+            st.error(f"Profile error: {e}")
+            st.session_state.user_data = {"username": "User", "xp": 0, "is_premium": False}
     
     # Show sidebar and get menu choice
     menu = show_sidebar()
+    
+    # Show guest limitation banner for certain features
+    if is_guest and menu in ["📓 Study Notes", "📊 Dashboard"]:
+        st.warning("⚠️ **Guest Mode:** This feature requires login to save data. [Login to unlock](#)")
     
     # Route to appropriate feature
     if menu == "🏠 Home":
         show_home()
     elif menu == "💬 Chat":
+        if is_guest:
+            st.info("💡 **Guest Mode:** Your chat won't be saved. Login to keep your history!")
         show_chat()
     elif menu == "📝 Quiz Generator":
         show_quiz_generator()
@@ -1723,11 +1808,19 @@ def main():
     elif menu == "🗂️ Flashcards":
         show_flashcards()
     elif menu == "📓 Study Notes":
-        show_study_notes()
+        if is_guest:
+            st.warning("📝 **Study Notes** requires login to save your notes.")
+            st.info("Login to unlock note-taking feature!")
+        else:
+            show_study_notes()
     elif menu == "⏱️ Study Timer":
         show_study_timer()
     elif menu == "📊 Dashboard":
-        show_dashboard()
+        if is_guest:
+            st.warning("📊 **Dashboard** is only available for logged-in users.")
+            st.info("Login to track your progress!")
+        else:
+            show_dashboard()
     elif menu == "⚙️ Settings":
         show_settings()
     else:
